@@ -1,0 +1,32 @@
+[project]
+name = "envoy-authz"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Nick Venenga",email = "nick@venenga.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "grpcio (>=1.76.0,<2.0.0)",
+    "grpcio-tools (>=1.76.0,<2.0.0)",
+    "envoyproxy-envoy-grpc-python (==1.76.0.1.20251020202141+86528c2a7812)",
+    "pyopenssl (>=25.3.0,<26.0.0)",
+    "python-json-logger (>=4.0.0,<5.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "buf.build"
+url = "https://buf.build/gen/python"
+priority = "supplemental"
+
+
+[dependency-groups]
+dev = [
+    "ruff (>=0.14.5,<0.15.0)"
+]

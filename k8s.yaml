@@ -1,0 +1,110 @@
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ca-ha-homelab-somemissing-info-tls
+  namespace: projectcontour
+spec:
+  refreshInterval: 300s
+  secretStoreRef:
+    name: default
+    kind: ClusterSecretStore
+  data:
+  - secretKey: ca.crt
+    remoteRef:
+      conversionStrategy: Default
+      key: ca-ha.apps.somemissing.info
+      decodingStrategy: None
+      metadataPolicy: None
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: frigate-x-proxy-secret
+  namespace: projectcontour
+spec:
+  refreshInterval: 300s
+  secretStoreRef:
+    name: default
+    kind: ClusterSecretStore
+  data:
+  - secretKey: value
+    remoteRef:
+      conversionStrategy: Default
+      key: frigate-x-proxy-secret
+      decodingStrategy: None
+      metadataPolicy: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-envoy-authz
+  namespace: projectcontour
+spec:
+  selector:
+    matchLabels:
+      app: python-envoy-authz
+  template:
+    metadata:
+      labels:
+        app: python-envoy-authz
+    spec:
+      containers:
+      - name: python-envoy-authz
+        image: registry.apps.nickv.me/python-envoy-authz
+        imagePullPolicy: Always
+        env:
+          - name: FRIGATE_X_PROXY_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: frigate-x-proxy-secret
+                key: value
+          - name: HA_CA_CERTIFICATE
+            valueFrom:
+              secretKeyRef:
+                name: ca-ha-homelab-somemissing-info-tls
+                key: ca.crt
+        ports:
+          - name: http
+            protocol: TCP
+            containerPort: 5000
+        volumeMounts:
+          - name: certificate
+            mountPath: /var/lib/tls
+      volumes:
+        - name: certificate
+          secret:
+            secretName: python-envoy-authz-tls-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-envoy-authz
+  namespace: projectcontour
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Cluster
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 5000
+  selector:
+    app: python-envoy-authz
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: python-envoy-authz
+  namespace: projectcontour
+spec:
+  secretName: python-envoy-authz-tls-cert
+  issuerRef:
+    name: k8s
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    - python-envoy-authz
+    - python-envoy-authz.projectcontour
+    - python-envoy-authz.projectcontour.svc.cluster.local.
+---
