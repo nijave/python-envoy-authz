@@ -41,59 +41,15 @@ def verify_client_cert(cert_pem: str) -> bool:
         return True
     except Exception as e:
         logger.info("%s", type(e).__name__)
-        print(f"Certificate verification failed: {e}")
         return False
-
-
-# def authorize():
-#     """
-#     Expects a JSON body like:
-#     {
-#         "client_certificate": "<PEM encoded cert>"
-#     }
-#     """
-#     print(request.content_type)
-#     data = request.get_json()
-#     pprint(data)
-#     client_cert = data.get("source", {}).get("certificate")
-#     if not client_cert:
-#         return jsonify(
-#             {
-#                 "status": "DENIED",
-#                 "denied_response": {"body": "No client certificate provided"},
-#             }
-#         ), 400
-#
-#     authorized = verify_client_cert(client_cert)
-#     if authorized:
-#         return jsonify(
-#             {
-#                 "status": "OK",
-#                 "ok_response": {
-#                     "headers": [
-#                         {
-#                             "header": {
-#                                 "key": "X-Proxy-Secret",
-#                                 "value": FRIGATE_X_PROXY_SECRET,
-#                             }
-#                         }
-#                     ]
-#                 },
-#             }
-#         ), 200
-#     else:
-#         return jsonify(
-#             {
-#                 "status": "DENIED",
-#                 "denied_response": {"body": "Invalid client certificate"},
-#             }
-#         ), 403
 
 
 class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
     """Simple Envoy External Authorization Service"""
 
     def Check(self, request, context):
+        """Entry point called by Envoy to authorize a request"""
+
         headers = dict(request.attributes.request.http.headers)
         path = request.attributes.request.http.path
 
@@ -107,17 +63,26 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
         )
         logger.debug("Headers: %s", headers)
 
+        # Figure out if a request should be allowed (can be arbitrary criteria)
         allowed = (
+            # Requests to the frigate metrics endpoint don't need auth
             request.attributes.request.http.host == "frigate.apps.somemissing.info"
             and path == "/api/metrics"
-        ) or verify_client_cert(
-            urllib.parse.unquote(request.attributes.source.certificate)
+        ) or (
+            # Requests should contain a valid client certificate from the Home Assistant CA
+            verify_client_cert(
+                urllib.parse.unquote(request.attributes.source.certificate)
+            )
         )
 
         if allowed:
             logger.info("✓ Authorized")
 
             return_headers: list[HeaderValueOption] = []
+
+            # For allowed requests to Frigate, add the trusted proxy token header
+            # which Frigate looks for to determine if the request is from an authorized
+            # proxy
             if request.attributes.request.http.host == "frigate.apps.somemissing.info":
                 return_headers.append(
                     HeaderValueOption(
