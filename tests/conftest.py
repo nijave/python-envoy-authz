@@ -9,13 +9,7 @@ FRIGATE_X_PROXY_SECRET) are built from the test values.
 
 import datetime
 import os
-import socket
-import urllib.parse
-from concurrent import futures
-from contextlib import closing
 
-import grpc
-import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -137,4 +131,4 @@ os.environ["HA_CA_CERTIFICATE"] = _pem(_TRUSTED_CA)
 os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
 
 # Now safe to import — triggers the global HA_CA_STORE build
-from envoy_authz import app  # noqa: E402
+from envoy_authz import app  # noqa: E402, F401
