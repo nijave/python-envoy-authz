@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-import typing
 import urllib.parse
 from concurrent import futures
 
