@@ -30,7 +30,7 @@ steps:
         --frontend dockerfile.v0
         --local context=.
         --local dockerfile=.
-        --output "type=image,\"name=registry.apps.nickv.me/python-envoy-authz:latest,registry.apps.nickv.me/python-envoy-authz:$SHORT_SHA\",push=true"
+        --output "type=image,\"name=registry.apps.nickv.me/nijave/python-envoy-authz:latest,registry.apps.nickv.me/nijave/python-envoy-authz:$SHORT_SHA\",push=true"
     when:
       - branch: main
         event: push
