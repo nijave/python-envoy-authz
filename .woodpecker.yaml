@@ -1,0 +1,36 @@
+# Pipeline runs on woodpecker.k8s.somemissing.info (kubernetes backend).
+# Image builds go through the shared rootless buildkitd in
+# k8s-manifests/vmubtkube-a/woodpecker/buildkit.woodpecker.yaml — no
+# docker.sock, no privileged steps. registry.apps.nickv.me accepts
+# unauthenticated pushes, so no docker_auth secret is required.
+
+when:
+  - event: push
+  - event: pull_request
+  - event: manual
+
+steps:
+  lint:
+    # renovate: datasource=docker depName=python
+    image: python:3.14-slim
+    commands:
+      - pip install poetry==2.2.1
+      - poetry install --no-root --with dev
+      - poetry run ruff check .
+
+  build-and-push:
+    # renovate: datasource=docker depName=moby/buildkit
+    image: moby/buildkit:v0.30.0
+    environment:
+      BUILDKIT_HOST: tcp://buildkitd.woodpecker.svc.cluster.local:1234
+    commands:
+      - SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
+      - >-
+        buildctl build
+        --frontend dockerfile.v0
+        --local context=.
+        --local dockerfile=.
+        --output "type=image,\"name=registry.apps.nickv.me/python-envoy-authz:latest,registry.apps.nickv.me/python-envoy-authz:$SHORT_SHA\",push=true"
+    when:
+      - branch: main
+        event: push
