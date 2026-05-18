@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "timezone": "America/New_York",
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": false,
+      "groupName": "minor and patch updates"
+    },
+    {
+      "matchManagers": ["poetry"],
+      "groupName": "python dependencies"
+    },
+    {
+      "matchManagers": ["poetry"],
+      "matchDepTypes": ["dev", "dev-dependencies"],
+      "groupName": "python dev dependencies"
+    },
+    {
+      "matchManagers": ["dockerfile", "woodpecker"],
+      "groupName": "container images"
+    }
+  ]
+}
