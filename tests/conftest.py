@@ -9,10 +9,8 @@ FRIGATE_X_PROXY_SECRET) are built from the test values.
 
 import datetime
 import os
-import socket
 import urllib.parse
 from concurrent import futures
-from contextlib import closing
 
 import grpc
 import pytest
@@ -138,18 +136,12 @@ os.environ["HA_CA_CERTIFICATE"] = _pem(_TRUSTED_CA)
 os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
 
 # Now safe to import — triggers the global HA_CA_STORE build
-from envoy_authz import app  # noqa: E402, F401
+from envoy_authz import app  # noqa: E402
 
 from envoy.service.auth.v3 import (  # noqa: E402
     external_auth_pb2,
     external_auth_pb2_grpc,
 )
-
-
-def _free_port() -> int:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture(scope="session")
@@ -195,7 +187,7 @@ def check_request():
         if client_cert_pem is not None:
             # Envoy URL-encodes the cert PEM in source.certificate
             request.attributes.source.certificate = urllib.parse.quote(
-                client_cert_pem
+                client_cert_pem, safe=""
             )
         return request
 
