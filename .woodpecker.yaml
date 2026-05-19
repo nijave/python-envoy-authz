@@ -16,8 +16,8 @@ steps:
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
-      - test -x .poetry/bin/poetry || curl -sSL https://install.python-poetry.org | POETRY_HOME=$PWD/.poetry POETRY_VERSION=2.2.1 python3 -
-      - export PATH=$PWD/.poetry/bin:$PATH
+      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.2.1)
+      - export PATH=$PWD/.poetry-venv/bin:$PATH
       - poetry install --no-root --with dev
       - poetry run ruff check .
 
@@ -27,8 +27,8 @@ steps:
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
-      - test -x .poetry/bin/poetry || curl -sSL https://install.python-poetry.org | POETRY_HOME=$PWD/.poetry POETRY_VERSION=2.2.1 python3 -
-      - export PATH=$PWD/.poetry/bin:$PATH
+      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.2.1)
+      - export PATH=$PWD/.poetry-venv/bin:$PATH
       - poetry install --no-root --with dev
       - poetry run pytest
 

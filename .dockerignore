@@ -5,7 +5,7 @@
 # Python local envs / tooling
 .venv/
 venv/
-.poetry/
+.poetry-venv/
 
 # Caches
 __pycache__/
