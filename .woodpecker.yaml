@@ -13,6 +13,8 @@ steps:
   lint:
     # renovate: datasource=docker depName=python
     image: python:3.14-slim
+    environment:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
       - pip install poetry==2.2.1
       - poetry install --no-root --with dev
@@ -21,6 +23,8 @@ steps:
   test:
     # renovate: datasource=docker depName=python
     image: python:3.14-slim
+    environment:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
       - pip install poetry==2.2.1
       - poetry install --no-root --with dev
