@@ -18,7 +18,7 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 
 FRIGATE_TEST_SECRET = "test-frigate-secret-abc123"
@@ -28,22 +28,49 @@ def _generate_key() -> rsa.RSAPrivateKey:
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
+def _ca_name(cn: str) -> x509.Name:
+    return x509.Name(
+        [
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "homelab"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "apps"),
+            x509.NameAttribute(NameOID.COMMON_NAME, cn),
+        ]
+    )
+
+
 def _build_ca(common_name: str) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     key = _generate_key()
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
-    )
+    name = _ca_name(common_name)
+    public_key = key.public_key()
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(public_key)
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(
             x509.BasicConstraints(ca=True, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(public_key),
+            critical=False,
         )
         .sign(private_key=key, algorithm=hashes.SHA256())
     )
@@ -55,7 +82,13 @@ def _build_signed_cert(
     issuer_key: rsa.RSAPrivateKey,
     issuer_cert: x509.Certificate,
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
+    """Leaf client cert signed by the given CA. Mirrors the extension
+    set used by real Home Assistant-issued client certs: BasicConstraints
+    CA:FALSE, KeyUsage (digitalSignature, keyEncipherment), ExtendedKeyUsage
+    (clientAuth), SubjectKeyIdentifier, AuthorityKeyIdentifier, and a DNS
+    SubjectAlternativeName matching the CN."""
     key = _generate_key()
+    public_key = key.public_key()
     subject = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
     )
@@ -64,11 +97,100 @@ def _build_signed_cert(
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer_cert.subject)
-        .public_key(key.public_key())
+        .public_key(public_key)
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(public_key),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                issuer_cert.public_key()
+            ),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(common_name)]),
+            critical=False,
+        )
         .sign(private_key=issuer_key, algorithm=hashes.SHA256())
+    )
+    return key, cert
+
+
+def _build_self_signed_leaf(
+    common_name: str,
+) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
+    """Self-signed client leaf cert. Carries the same extension shape
+    as `_build_signed_cert` (CA:FALSE, KeyUsage, EKU=clientAuth, SAN)
+    but is its own issuer, so the trusted CA store rejects it."""
+    key = _generate_key()
+    public_key = key.public_key()
+    subject = issuer = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(public_key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(public_key),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(common_name)]),
+            critical=False,
+        )
+        .sign(private_key=key, algorithm=hashes.SHA256())
     )
     return key, cert
 
@@ -122,13 +244,15 @@ _UNTRUSTED_CA_KEY, _UNTRUSTED_CA = _build_ca("test-untrusted-ca")
 _SERVER_KEY, _SERVER_CERT = _build_server_cert("localhost")
 
 _TRUSTED_CLIENT_KEY, _TRUSTED_CLIENT_CERT = _build_signed_cert(
-    "trusted-client", _TRUSTED_CA_KEY, _TRUSTED_CA
+    "trusted-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
 )
 _UNTRUSTED_CLIENT_KEY, _UNTRUSTED_CLIENT_CERT = _build_signed_cert(
-    "untrusted-client", _UNTRUSTED_CA_KEY, _UNTRUSTED_CA
+    "untrusted-client.ha.apps.somemissing.info",
+    _UNTRUSTED_CA_KEY,
+    _UNTRUSTED_CA,
 )
-_SELF_SIGNED_CLIENT_KEY, _SELF_SIGNED_CLIENT_CERT = _build_ca(
-    "self-signed-client"
+_SELF_SIGNED_CLIENT_KEY, _SELF_SIGNED_CLIENT_CERT = _build_self_signed_leaf(
+    "self-signed-client.ha.apps.somemissing.info"
 )
 
 # Set env vars BEFORE importing the app module
