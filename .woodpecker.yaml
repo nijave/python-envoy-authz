@@ -18,6 +18,14 @@ steps:
       - poetry install --no-root --with dev
       - poetry run ruff check .
 
+  test:
+    # renovate: datasource=docker depName=python
+    image: python:3.14-slim
+    commands:
+      - pip install poetry==2.2.1
+      - poetry install --no-root --with dev
+      - poetry run pytest
+
   build-and-push:
     # renovate: datasource=docker depName=moby/buildkit
     image: moby/buildkit:v0.30.0
