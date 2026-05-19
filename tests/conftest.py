@@ -9,6 +9,13 @@ FRIGATE_X_PROXY_SECRET) are built from the test values.
 
 import datetime
 import os
+import socket
+import urllib.parse
+from concurrent import futures
+from contextlib import closing
+
+import grpc
+import pytest
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -132,3 +139,84 @@ os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
 
 # Now safe to import — triggers the global HA_CA_STORE build
 from envoy_authz import app  # noqa: E402, F401
+
+from envoy.service.auth.v3 import (  # noqa: E402
+    external_auth_pb2,
+    external_auth_pb2_grpc,
+)
+
+
+def _free_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session")
+def grpc_server():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
+        app.AuthorizationService(), server
+    )
+    credentials = grpc.ssl_server_credentials(
+        [(_pem_key(_SERVER_KEY), _pem_bytes(_SERVER_CERT))]
+    )
+    port = server.add_secure_port("[::]:0", credentials)
+    server.start()
+    try:
+        yield port
+    finally:
+        server.stop(grace=None)
+
+
+@pytest.fixture
+def stub(grpc_server):
+    creds = grpc.ssl_channel_credentials(
+        root_certificates=_pem_bytes(_SERVER_CERT)
+    )
+    options = (("grpc.ssl_target_name_override", "localhost"),)
+    channel = grpc.secure_channel(
+        f"localhost:{grpc_server}", creds, options=options
+    )
+    try:
+        yield external_auth_pb2_grpc.AuthorizationStub(channel)
+    finally:
+        channel.close()
+
+
+@pytest.fixture(scope="session")
+def check_request():
+    """Returns a builder for `CheckRequest` messages."""
+
+    def _build(*, host: str, path: str, client_cert_pem: str | None = None):
+        request = external_auth_pb2.CheckRequest()
+        request.attributes.request.http.host = host
+        request.attributes.request.http.path = path
+        if client_cert_pem is not None:
+            # Envoy URL-encodes the cert PEM in source.certificate
+            request.attributes.source.certificate = urllib.parse.quote(
+                client_cert_pem
+            )
+        return request
+
+    return _build
+
+
+@pytest.fixture(scope="session")
+def trusted_client_cert_pem() -> str:
+    return _pem(_TRUSTED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def untrusted_client_cert_pem() -> str:
+    return _pem(_UNTRUSTED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def self_signed_client_cert_pem() -> str:
+    return _pem(_SELF_SIGNED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def frigate_secret() -> str:
+    return FRIGATE_TEST_SECRET
