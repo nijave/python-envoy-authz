@@ -23,3 +23,33 @@ def test_frigate_metrics_no_cert_allowed(stub, check_request, frigate_secret):
 
     assert response.status.code == code_pb2.OK
     assert _header_value(response, "X-Proxy-Secret") == frigate_secret
+
+
+def test_frigate_with_valid_cert_injects_secret(
+    stub, check_request, trusted_client_cert_pem, frigate_secret
+):
+    response = stub.Check(
+        check_request(
+            host=FRIGATE_HOST,
+            path="/api/other",
+            client_cert_pem=trusted_client_cert_pem,
+        )
+    )
+
+    assert response.status.code == code_pb2.OK
+    assert _header_value(response, "X-Proxy-Secret") == frigate_secret
+
+
+def test_other_host_with_valid_cert_no_header(
+    stub, check_request, trusted_client_cert_pem
+):
+    response = stub.Check(
+        check_request(
+            host="other.example.com",
+            path="/any",
+            client_cert_pem=trusted_client_cert_pem,
+        )
+    )
+
+    assert response.status.code == code_pb2.OK
+    assert _header_value(response, "X-Proxy-Secret") is None
