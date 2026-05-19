@@ -1,5 +1,6 @@
 """Integration tests for AuthorizationService.Check over real gRPC + TLS."""
 
+from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2
 
 
@@ -53,3 +54,70 @@ def test_other_host_with_valid_cert_no_header(
 
     assert response.status.code == code_pb2.OK
     assert _header_value(response, "X-Proxy-Secret") is None
+
+
+def _assert_denied(response) -> None:
+    assert response.status.code == code_pb2.PERMISSION_DENIED
+    assert (
+        response.denied_response.status.code
+        == http_status_pb2.StatusCode.Forbidden
+    )
+    assert response.denied_response.body == '{"error": "Unauthorized"}'
+
+
+def test_no_cert_on_non_metrics_denied(stub, check_request):
+    response = stub.Check(
+        check_request(host=FRIGATE_HOST, path="/api/events")
+    )
+    _assert_denied(response)
+
+
+def test_wrong_path_on_frigate_without_cert_denied(stub, check_request):
+    response = stub.Check(
+        check_request(host=FRIGATE_HOST, path="/api/metrics_extra")
+    )
+    _assert_denied(response)
+
+
+def test_wrong_host_on_metrics_path_denied(stub, check_request):
+    response = stub.Check(
+        check_request(host="not-frigate.example.com", path="/api/metrics")
+    )
+    _assert_denied(response)
+
+
+def test_cert_signed_by_different_ca_denied(
+    stub, check_request, untrusted_client_cert_pem
+):
+    response = stub.Check(
+        check_request(
+            host="other.example.com",
+            path="/",
+            client_cert_pem=untrusted_client_cert_pem,
+        )
+    )
+    _assert_denied(response)
+
+
+def test_malformed_cert_denied(stub, check_request):
+    response = stub.Check(
+        check_request(
+            host="other.example.com",
+            path="/",
+            client_cert_pem="not-a-cert",
+        )
+    )
+    _assert_denied(response)
+
+
+def test_self_signed_client_cert_denied(
+    stub, check_request, self_signed_client_cert_pem
+):
+    response = stub.Check(
+        check_request(
+            host="other.example.com",
+            path="/",
+            client_cert_pem=self_signed_client_cert_pem,
+        )
+    )
+    _assert_denied(response)
