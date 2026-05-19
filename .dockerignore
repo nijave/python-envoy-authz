@@ -1,0 +1,31 @@
+# VCS
+.git/
+.gitignore
+
+# Python local envs / tooling
+.venv/
+venv/
+.poetry/
+
+# Caches
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Tests and docs (not needed at runtime)
+tests/
+docs/
+
+# IDE
+.idea/
+.vscode/
+
+# Repo infra
+.woodpecker.yaml
+.dockerignore
+Dockerfile
+k8s.yaml
+renovate.json
