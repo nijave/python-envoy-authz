@@ -83,7 +83,7 @@ dependency for clarity.
 
 | Test | Host | Path | Client cert | Expected |
 |---|---|---|---|---|
-| `test_frigate_metrics_no_cert_allowed` | `frigate.apps.somemissing.info` | `/api/metrics` | none | `OK`, no `X-Proxy-Secret` |
+| `test_frigate_metrics_no_cert_allowed` | `frigate.apps.somemissing.info` | `/api/metrics` | none | `OK` + `X-Proxy-Secret` header (Frigate's metrics endpoint requires the header to be present even on the no-auth path) |
 | `test_frigate_with_valid_cert_injects_secret` | `frigate.apps.somemissing.info` | `/api/other` | trusted | `OK` + `X-Proxy-Secret` header with the configured value |
 | `test_other_host_with_valid_cert_no_header` | `other.example.com` | `/any` | trusted | `OK`, no `X-Proxy-Secret` |
 | `test_no_cert_on_non_metrics_denied` | `frigate.apps.somemissing.info` | `/api/events` | none | `PERMISSION_DENIED`, HTTP 403, body `{"error": "Unauthorized"}` |
