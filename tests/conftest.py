@@ -252,10 +252,47 @@ _WRONG_EKU_CLIENT_KEY, _WRONG_EKU_CLIENT_CERT = _build_signed_cert(
     _TRUSTED_CA,
     eku=[ExtendedKeyUsageOID.SERVER_AUTH],
 )
+_REVOKED_CLIENT_KEY, _REVOKED_CLIENT_CERT = _build_signed_cert(
+    "revoked-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
+)
+
+
+def _build_crl(
+    ca_key: rsa.RSAPrivateKey,
+    ca_cert: x509.Certificate,
+    revoked_serials: list[int],
+    *,
+    expired: bool = False,
+) -> x509.CertificateRevocationList:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if expired:
+        last_update = now - datetime.timedelta(days=2)
+        next_update = now - datetime.timedelta(days=1)
+    else:
+        last_update = now
+        next_update = now + datetime.timedelta(days=30)
+    builder = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(ca_cert.subject)
+        .last_update(last_update)
+        .next_update(next_update)
+    )
+    for serial in revoked_serials:
+        builder = builder.add_revoked_certificate(
+            x509.RevokedCertificateBuilder()
+            .serial_number(serial)
+            .revocation_date(now)
+            .build()
+        )
+    return builder.sign(private_key=ca_key, algorithm=hashes.SHA256())
+
+
+_CRL = _build_crl(_TRUSTED_CA_KEY, _TRUSTED_CA, [_REVOKED_CLIENT_CERT.serial_number])
 
 # Set env vars BEFORE importing the app module
 os.environ["HA_CA_CERTIFICATE"] = _pem(_TRUSTED_CA)
 os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
+os.environ["HA_CRL"] = _CRL.public_bytes(serialization.Encoding.PEM).decode()
 
 # Now safe to import — triggers the global HA_CA_STORE build
 from envoy_authz import app  # noqa: E402
@@ -344,6 +381,22 @@ def self_signed_client_cert_pem() -> str:
 @pytest.fixture(scope="session")
 def wrong_eku_client_cert_pem() -> str:
     return _pem(_WRONG_EKU_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def revoked_client_cert_pem() -> str:
+    return _pem(_REVOKED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def expired_crl_pem() -> str:
+    crl = _build_crl(
+        _TRUSTED_CA_KEY,
+        _TRUSTED_CA,
+        [_REVOKED_CLIENT_CERT.serial_number],
+        expired=True,
+    )
+    return crl.public_bytes(serialization.Encoding.PEM).decode()
 
 
 @pytest.fixture(scope="session")

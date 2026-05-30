@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import sys
@@ -29,6 +30,22 @@ ca_cert = crypto.load_certificate(
 )
 HA_CA_STORE = crypto.X509Store()
 HA_CA_STORE.add_cert(ca_cert)
+
+
+def _configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
+    crl = x509.load_pem_x509_crl(crl_pem.encode())
+    if crl.next_update_utc <= datetime.datetime.now(datetime.timezone.utc):
+        logger.warning("CRL is expired (next_update=%s), skipping", crl.next_update_utc)
+        return False
+    store.add_crl(crl)
+    store.set_flags(crypto.X509StoreFlags.CRL_CHECK)
+    logger.info("CRL loaded (next_update=%s)", crl.next_update_utc)
+    return True
+
+
+_ha_crl_pem = os.environ.get("HA_CRL")
+if _ha_crl_pem:
+    _configure_crl(HA_CA_STORE, _ha_crl_pem)
 
 
 def verify_client_cert(cert_pem: str) -> bool:

@@ -125,3 +125,15 @@ def test_wrong_eku_client_cert_denied(stub, check_request, wrong_eku_client_cert
         )
     )
     _assert_denied(response)
+
+
+def test_revoked_client_cert_denied(stub, check_request, revoked_client_cert_pem):
+    """A cert signed by the trusted CA but listed in the CRL must be rejected."""
+    response = stub.Check(
+        check_request(
+            host="other.example.com",
+            path="/",
+            client_cert_pem=revoked_client_cert_pem,
+        )
+    )
+    _assert_denied(response)

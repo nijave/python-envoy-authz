@@ -31,7 +31,8 @@ priority = "supplemental"
 dev = [
     "ruff (>=0.14.5,<0.15.0)",
     "pytest (>=8.3.0,<9.0.0)",
-    "cryptography (>=44.0.0,<46.0.0)"
+    "cryptography (>=44.0.0,<46.0.0)",
+    "pre-commit (>=4.6.0,<5.0.0)"
 ]
 
 [tool.pytest.ini_options]
