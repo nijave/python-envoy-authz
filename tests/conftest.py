@@ -51,9 +51,7 @@ def _build_ca(common_name: str) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
-        .add_extension(
-            x509.BasicConstraints(ca=True, path_length=None), critical=True
-        )
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=False,
@@ -81,17 +79,19 @@ def _build_signed_cert(
     common_name: str,
     issuer_key: rsa.RSAPrivateKey,
     issuer_cert: x509.Certificate,
+    *,
+    eku: list[x509.ObjectIdentifier] | None = None,
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     """Leaf client cert signed by the given CA. Mirrors the extension
     set used by real Home Assistant-issued client certs: BasicConstraints
     CA:FALSE, KeyUsage (digitalSignature, keyEncipherment), ExtendedKeyUsage
     (clientAuth), SubjectKeyIdentifier, AuthorityKeyIdentifier, and a DNS
     SubjectAlternativeName matching the CN."""
+    if eku is None:
+        eku = [ExtendedKeyUsageOID.CLIENT_AUTH]
     key = _generate_key()
     public_key = key.public_key()
-    subject = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
-    )
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -101,9 +101,7 @@ def _build_signed_cert(
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
-        .add_extension(
-            x509.BasicConstraints(ca=False, path_length=None), critical=True
-        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
@@ -119,7 +117,7 @@ def _build_signed_cert(
             critical=True,
         )
         .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+            x509.ExtendedKeyUsage(eku),
             critical=False,
         )
         .add_extension(
@@ -149,9 +147,7 @@ def _build_self_signed_leaf(
     but is its own issuer, so the trusted CA store rejects it."""
     key = _generate_key()
     public_key = key.public_key()
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
-    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -161,9 +157,7 @@ def _build_self_signed_leaf(
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(days=1))
-        .add_extension(
-            x509.BasicConstraints(ca=False, path_length=None), critical=True
-        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
@@ -200,9 +194,7 @@ def _build_server_cert(
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     """Self-signed server cert with a SubjectAltName for TLS validation."""
     key = _generate_key()
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
-    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -254,6 +246,12 @@ _UNTRUSTED_CLIENT_KEY, _UNTRUSTED_CLIENT_CERT = _build_signed_cert(
 _SELF_SIGNED_CLIENT_KEY, _SELF_SIGNED_CLIENT_CERT = _build_self_signed_leaf(
     "self-signed-client.ha.apps.somemissing.info"
 )
+_WRONG_EKU_CLIENT_KEY, _WRONG_EKU_CLIENT_CERT = _build_signed_cert(
+    "wrong-eku-client.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    eku=[ExtendedKeyUsageOID.SERVER_AUTH],
+)
 
 # Set env vars BEFORE importing the app module
 os.environ["HA_CA_CERTIFICATE"] = _pem(_TRUSTED_CA)
@@ -287,13 +285,9 @@ def grpc_server():
 
 @pytest.fixture
 def stub(grpc_server):
-    creds = grpc.ssl_channel_credentials(
-        root_certificates=_pem_bytes(_SERVER_CERT)
-    )
+    creds = grpc.ssl_channel_credentials(root_certificates=_pem_bytes(_SERVER_CERT))
     options = (("grpc.ssl_target_name_override", "localhost"),)
-    channel = grpc.secure_channel(
-        f"localhost:{grpc_server}", creds, options=options
-    )
+    channel = grpc.secure_channel(f"localhost:{grpc_server}", creds, options=options)
     try:
         yield external_auth_pb2_grpc.AuthorizationStub(channel)
     finally:
@@ -331,6 +325,11 @@ def untrusted_client_cert_pem() -> str:
 @pytest.fixture(scope="session")
 def self_signed_client_cert_pem() -> str:
     return _pem(_SELF_SIGNED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def wrong_eku_client_cert_pem() -> str:
+    return _pem(_WRONG_EKU_CLIENT_CERT)
 
 
 @pytest.fixture(scope="session")

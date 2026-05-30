@@ -5,6 +5,8 @@ import urllib.parse
 from concurrent import futures
 
 import grpc
+from cryptography import x509
+from cryptography.x509.oid import ExtendedKeyUsageOID
 from OpenSSL import crypto
 from envoy.config.core.v3.base_pb2 import HeaderValueOption, HeaderValue
 from envoy.service.auth.v3 import external_auth_pb2
@@ -33,10 +35,15 @@ def verify_client_cert(cert_pem: str) -> bool:
     Verify client certificate against CA.
     """
     try:
-        crypto.X509StoreContext(
-            HA_CA_STORE,
-            crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem.encode()),
-        ).verify_certificate()
+        cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem.encode())
+        crypto.X509StoreContext(HA_CA_STORE, cert).verify_certificate()
+
+        eku = cert.to_cryptography().extensions.get_extension_for_class(
+            x509.ExtendedKeyUsage
+        )
+        if ExtendedKeyUsageOID.CLIENT_AUTH not in eku.value:
+            return False
+
         return True
     except Exception as e:
         logger.info("%s", type(e).__name__)
