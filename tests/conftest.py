@@ -260,6 +260,7 @@ os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
 # Now safe to import — triggers the global HA_CA_STORE build
 from envoy_authz import app  # noqa: E402
 
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc  # noqa: E402
 from envoy.service.auth.v3 import (  # noqa: E402
     external_auth_pb2,
     external_auth_pb2_grpc,
@@ -272,11 +273,14 @@ def grpc_server():
     external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
         app.AuthorizationService(), server
     )
+    health_servicer = health.HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
     credentials = grpc.ssl_server_credentials(
         [(_pem_key(_SERVER_KEY), _pem_bytes(_SERVER_CERT))]
     )
     port = server.add_secure_port("[::]:0", credentials)
     server.start()
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
     try:
         yield port
     finally:
@@ -284,14 +288,24 @@ def grpc_server():
 
 
 @pytest.fixture
-def stub(grpc_server):
+def channel(grpc_server):
     creds = grpc.ssl_channel_credentials(root_certificates=_pem_bytes(_SERVER_CERT))
     options = (("grpc.ssl_target_name_override", "localhost"),)
-    channel = grpc.secure_channel(f"localhost:{grpc_server}", creds, options=options)
+    ch = grpc.secure_channel(f"localhost:{grpc_server}", creds, options=options)
     try:
-        yield external_auth_pb2_grpc.AuthorizationStub(channel)
+        yield ch
     finally:
-        channel.close()
+        ch.close()
+
+
+@pytest.fixture
+def stub(channel):
+    return external_auth_pb2_grpc.AuthorizationStub(channel)
+
+
+@pytest.fixture
+def health_stub(channel):
+    return health_pb2_grpc.HealthStub(channel)
 
 
 @pytest.fixture(scope="session")

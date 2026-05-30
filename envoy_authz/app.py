@@ -5,6 +5,7 @@ import urllib.parse
 from concurrent import futures
 
 import grpc
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from cryptography import x509
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from OpenSSL import crypto
@@ -121,10 +122,12 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
 if __name__ == "__main__":
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
 
-    # Register service
+    # Register services
     external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
         AuthorizationService(), server
     )
+    health_servicer = health.HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
     # Load TLS credentials
     with open("/var/lib/tls/tls.key", "rb") as f:
@@ -138,4 +141,5 @@ if __name__ == "__main__":
 
     logger.info("Starting secure gRPC server on port 5000...")
     server.start()
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
     server.wait_for_termination()
