@@ -1,7 +1,7 @@
 [project]
 name = "envoy-authz"
 version = "0.1.0"
-description = ""
+description = "Envoy External Authorization (ext_authz) gRPC service"
 authors = [
     {name = "Nick Venenga",email = "nick@venenga.com"}
 ]

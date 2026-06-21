@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import signal
 import sys
 import urllib.parse
 from concurrent import futures
@@ -182,4 +183,13 @@ if __name__ == "__main__":
     logger.info("Starting secure gRPC server on port 5000...")
     server.start()
     health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+
+    def _shutdown(signum, _frame):
+        logger.info("Received signal %s, draining...", signum)
+        health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
+        server.stop(grace=10)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
     server.wait_for_termination()
