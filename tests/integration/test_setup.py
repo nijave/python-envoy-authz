@@ -1,31 +1,34 @@
-"""Sanity test that conftest sets env vars before importing the app."""
-
-import os
+"""Tests for config loading and CRL helpers."""
 
 from OpenSSL import crypto
 
 from envoy_authz import app
 
 
-def test_frigate_secret_env_var_is_set(frigate_secret):
-    assert os.environ["FRIGATE_X_PROXY_SECRET"] == frigate_secret
-
-
-def test_app_picks_up_frigate_secret(frigate_secret):
-    assert app.FRIGATE_X_PROXY_SECRET == frigate_secret
-
-
-def test_app_ha_ca_store_is_built():
-    # If the env var was set in time, the module-level store exists.
-    assert app.HA_CA_STORE is not None
-
-
-def test_expired_crl_not_loaded(expired_crl_pem):
+def test_expired_crl_not_loaded(expired_crl_pem, ca_cert_pem):
     store = crypto.X509Store()
     store.add_cert(
-        crypto.load_certificate(
-            crypto.FILETYPE_PEM,
-            os.environ["HA_CA_CERTIFICATE"].encode(),
-        )
+        crypto.load_certificate(crypto.FILETYPE_PEM, ca_cert_pem.encode()),
     )
     assert app._configure_crl(store, expired_crl_pem) is False
+
+
+def test_load_config_reads_env(ca_cert_pem, crl_pem, frigate_secret, monkeypatch):
+    monkeypatch.setenv("HA_CA_CERTIFICATE", ca_cert_pem)
+    monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", frigate_secret)
+    monkeypatch.setenv("HA_CRL", crl_pem)
+
+    config = app.load_config()
+
+    assert config.frigate_proxy_secret == frigate_secret
+    assert config.ha_ca_store is not None
+
+
+def test_load_config_without_crl(ca_cert_pem, frigate_secret, monkeypatch):
+    monkeypatch.setenv("HA_CA_CERTIFICATE", ca_cert_pem)
+    monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", frigate_secret)
+    monkeypatch.delenv("HA_CRL", raising=False)
+
+    config = app.load_config()
+
+    assert config.frigate_proxy_secret == frigate_secret

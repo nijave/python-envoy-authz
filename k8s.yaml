@@ -51,7 +51,7 @@ spec:
     spec:
       containers:
       - name: python-envoy-authz
-        image: registry.apps.nickv.me/python-envoy-authz
+        image: registry.apps.nickv.me/nijave/python-envoy-authz
         imagePullPolicy: Always
         env:
           - name: FRIGATE_X_PROXY_SECRET

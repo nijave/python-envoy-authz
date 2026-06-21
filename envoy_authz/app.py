@@ -4,6 +4,7 @@ import os
 import sys
 import urllib.parse
 from concurrent import futures
+from dataclasses import dataclass
 
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
@@ -22,14 +23,11 @@ handler.setFormatter(jsonlogger.JsonFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[handler])
 logger = logging.getLogger(__name__)
 
-FRIGATE_X_PROXY_SECRET = os.environ["FRIGATE_X_PROXY_SECRET"]
 
-ca_cert = crypto.load_certificate(
-    crypto.FILETYPE_PEM,
-    os.environ["HA_CA_CERTIFICATE"].encode(),
-)
-HA_CA_STORE = crypto.X509Store()
-HA_CA_STORE.add_cert(ca_cert)
+@dataclass
+class Config:
+    frigate_proxy_secret: str
+    ha_ca_store: crypto.X509Store
 
 
 def _configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
@@ -43,18 +41,32 @@ def _configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
     return True
 
 
-_ha_crl_pem = os.environ.get("HA_CRL")
-if _ha_crl_pem:
-    _configure_crl(HA_CA_STORE, _ha_crl_pem)
+def build_store(ca_cert_pem: str, crl_pem: str | None = None) -> crypto.X509Store:
+    ca_cert = crypto.load_certificate(crypto.FILETYPE_PEM, ca_cert_pem.encode())
+    store = crypto.X509Store()
+    store.add_cert(ca_cert)
+    if crl_pem:
+        _configure_crl(store, crl_pem)
+    return store
 
 
-def verify_client_cert(cert_pem: str) -> bool:
+def load_config() -> Config:
+    return Config(
+        frigate_proxy_secret=os.environ["FRIGATE_X_PROXY_SECRET"],
+        ha_ca_store=build_store(
+            os.environ["HA_CA_CERTIFICATE"],
+            os.environ.get("HA_CRL"),
+        ),
+    )
+
+
+def verify_client_cert(cert_pem: str, store: crypto.X509Store) -> bool:
     """
     Verify client certificate against CA.
     """
     try:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem.encode())
-        crypto.X509StoreContext(HA_CA_STORE, cert).verify_certificate()
+        crypto.X509StoreContext(store, cert).verify_certificate()
 
         eku = cert.to_cryptography().extensions.get_extension_for_class(
             x509.ExtendedKeyUsage
@@ -63,13 +75,16 @@ def verify_client_cert(cert_pem: str) -> bool:
             return False
 
         return True
-    except Exception as e:
-        logger.info("%s", type(e).__name__)
+    except Exception:
+        logger.exception("Client cert verification failed")
         return False
 
 
 class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
     """Simple Envoy External Authorization Service"""
+
+    def __init__(self, config: Config):
+        self._config = config
 
     def Check(self, request, context):
         """Entry point called by Envoy to authorize a request"""
@@ -95,7 +110,8 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
         ) or (
             # Requests should contain a valid client certificate from the Home Assistant CA
             verify_client_cert(
-                urllib.parse.unquote(request.attributes.source.certificate)
+                urllib.parse.unquote(request.attributes.source.certificate),
+                self._config.ha_ca_store,
             )
         )
 
@@ -112,7 +128,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                     HeaderValueOption(
                         header=HeaderValue(
                             key="X-Proxy-Secret",
-                            value=FRIGATE_X_PROXY_SECRET,
+                            value=self._config.frigate_proxy_secret,
                         ),
                     )
                 )
@@ -137,11 +153,13 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
 
 
 if __name__ == "__main__":
+    config = load_config()
+
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
 
     # Register services
     external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
-        AuthorizationService(), server
+        AuthorizationService(config), server
     )
     health_servicer = health.HealthServicer()
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)

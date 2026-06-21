@@ -1,14 +1,10 @@
 """Test fixtures for envoy_authz integration tests.
 
-This module's top-level code runs at pytest conftest load time, which
-happens before any test module is imported. It generates an ephemeral
-PKI, sets the env vars that `envoy_authz.app` reads at import time, and
-*then* imports the app so its module-level globals (HA_CA_STORE,
-FRIGATE_X_PROXY_SECRET) are built from the test values.
+Generates an ephemeral PKI and builds a `Config` directly (no env vars
+needed — the app module has no import-time side effects).
 """
 
 import datetime
-import os
 import urllib.parse
 from concurrent import futures
 
@@ -19,6 +15,14 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+from envoy_authz import app
+from envoy_authz.app import AuthorizationService, Config
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+from envoy.service.auth.v3 import (
+    external_auth_pb2,
+    external_auth_pb2_grpc,
+)
 
 
 FRIGATE_TEST_SECRET = "test-frigate-secret-abc123"
@@ -289,26 +293,24 @@ def _build_crl(
 
 _CRL = _build_crl(_TRUSTED_CA_KEY, _TRUSTED_CA, [_REVOKED_CLIENT_CERT.serial_number])
 
-# Set env vars BEFORE importing the app module
-os.environ["HA_CA_CERTIFICATE"] = _pem(_TRUSTED_CA)
-os.environ["FRIGATE_X_PROXY_SECRET"] = FRIGATE_TEST_SECRET
-os.environ["HA_CRL"] = _CRL.public_bytes(serialization.Encoding.PEM).decode()
 
-# Now safe to import — triggers the global HA_CA_STORE build
-from envoy_authz import app  # noqa: E402
-
-from grpc_health.v1 import health, health_pb2, health_pb2_grpc  # noqa: E402
-from envoy.service.auth.v3 import (  # noqa: E402
-    external_auth_pb2,
-    external_auth_pb2_grpc,
-)
+@pytest.fixture(scope="session")
+def ha_config() -> Config:
+    store = app.build_store(
+        _pem(_TRUSTED_CA),
+        _CRL.public_bytes(serialization.Encoding.PEM).decode(),
+    )
+    return Config(
+        frigate_proxy_secret=FRIGATE_TEST_SECRET,
+        ha_ca_store=store,
+    )
 
 
 @pytest.fixture(scope="session")
-def grpc_server():
+def grpc_server(ha_config):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
-        app.AuthorizationService(), server
+        AuthorizationService(ha_config), server
     )
     health_servicer = health.HealthServicer()
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
@@ -386,6 +388,16 @@ def wrong_eku_client_cert_pem() -> str:
 @pytest.fixture(scope="session")
 def revoked_client_cert_pem() -> str:
     return _pem(_REVOKED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def ca_cert_pem() -> str:
+    return _pem(_TRUSTED_CA)
+
+
+@pytest.fixture(scope="session")
+def crl_pem() -> str:
+    return _CRL.public_bytes(serialization.Encoding.PEM).decode()
 
 
 @pytest.fixture(scope="session")
