@@ -3,8 +3,7 @@
 from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2
 
-
-FRIGATE_HOST = "frigate.apps.somemissing.info"
+from envoy_authz.app import FRIGATE_HOST
 
 
 def _header_value(response, key: str) -> str | None:

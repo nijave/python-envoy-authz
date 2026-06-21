@@ -24,5 +24,4 @@ RUN /root/.local/bin/poetry install --no-root --only main
 
 COPY . /app
 EXPOSE 5000
-#CMD ["granian", "--interface", "wsgi", "--host", "::", "--port", "5000", "--access-log", "app:app"]
 CMD ["/root/.local/bin/poetry", "run", "python3", "envoy_authz/app.py"]

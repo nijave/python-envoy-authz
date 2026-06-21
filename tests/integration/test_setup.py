@@ -10,7 +10,7 @@ def test_expired_crl_not_loaded(expired_crl_pem, ca_cert_pem):
     store.add_cert(
         crypto.load_certificate(crypto.FILETYPE_PEM, ca_cert_pem.encode()),
     )
-    assert app._configure_crl(store, expired_crl_pem) is False
+    assert app.configure_crl(store, expired_crl_pem) is False
 
 
 def test_load_config_reads_env(ca_cert_pem, crl_pem, frigate_secret, monkeypatch):

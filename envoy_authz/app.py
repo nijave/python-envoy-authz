@@ -27,10 +27,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     frigate_proxy_secret: str
+    # Shared across the gRPC thread pool; must not be mutated after the
+    # server starts (concurrent reads during cert verification are safe).
     ha_ca_store: crypto.X509Store
 
 
-def _configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
+FRIGATE_HOST = "frigate.apps.somemissing.info"
+
+
+def configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
     crl = x509.load_pem_x509_crl(crl_pem.encode())
     if crl.next_update_utc <= datetime.datetime.now(datetime.timezone.utc):
         logger.warning("CRL is expired (next_update=%s), skipping", crl.next_update_utc)
@@ -46,7 +51,7 @@ def build_store(ca_cert_pem: str, crl_pem: str | None = None) -> crypto.X509Stor
     store = crypto.X509Store()
     store.add_cert(ca_cert)
     if crl_pem:
-        _configure_crl(store, crl_pem)
+        configure_crl(store, crl_pem)
     return store
 
 
@@ -105,7 +110,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
         # Figure out if a request should be allowed (can be arbitrary criteria)
         allowed = (
             # Requests to the frigate metrics endpoint don't need auth
-            request.attributes.request.http.host == "frigate.apps.somemissing.info"
+            request.attributes.request.http.host == FRIGATE_HOST
             and path == "/api/metrics"
         ) or (
             # Requests should contain a valid client certificate from the Home Assistant CA
@@ -123,7 +128,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
             # For allowed requests to Frigate, add the trusted proxy token header
             # which Frigate looks for to determine if the request is from an authorized
             # proxy
-            if request.attributes.request.http.host == "frigate.apps.somemissing.info":
+            if request.attributes.request.http.host == FRIGATE_HOST:
                 return_headers.append(
                     HeaderValueOption(
                         header=HeaderValue(

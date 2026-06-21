@@ -239,24 +239,24 @@ _TRUSTED_CA_KEY, _TRUSTED_CA = _build_ca("test-trusted-ca")
 _UNTRUSTED_CA_KEY, _UNTRUSTED_CA = _build_ca("test-untrusted-ca")
 _SERVER_KEY, _SERVER_CERT = _build_server_cert("localhost")
 
-_TRUSTED_CLIENT_KEY, _TRUSTED_CLIENT_CERT = _build_signed_cert(
+_, _TRUSTED_CLIENT_CERT = _build_signed_cert(
     "trusted-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
 )
-_UNTRUSTED_CLIENT_KEY, _UNTRUSTED_CLIENT_CERT = _build_signed_cert(
+_, _UNTRUSTED_CLIENT_CERT = _build_signed_cert(
     "untrusted-client.ha.apps.somemissing.info",
     _UNTRUSTED_CA_KEY,
     _UNTRUSTED_CA,
 )
-_SELF_SIGNED_CLIENT_KEY, _SELF_SIGNED_CLIENT_CERT = _build_self_signed_leaf(
+_, _SELF_SIGNED_CLIENT_CERT = _build_self_signed_leaf(
     "self-signed-client.ha.apps.somemissing.info"
 )
-_WRONG_EKU_CLIENT_KEY, _WRONG_EKU_CLIENT_CERT = _build_signed_cert(
+_, _WRONG_EKU_CLIENT_CERT = _build_signed_cert(
     "wrong-eku-client.ha.apps.somemissing.info",
     _TRUSTED_CA_KEY,
     _TRUSTED_CA,
     eku=[ExtendedKeyUsageOID.SERVER_AUTH],
 )
-_REVOKED_CLIENT_KEY, _REVOKED_CLIENT_CERT = _build_signed_cert(
+_, _REVOKED_CLIENT_CERT = _build_signed_cert(
     "revoked-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
 )
 
