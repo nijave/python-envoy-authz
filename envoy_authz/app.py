@@ -19,6 +19,8 @@ from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2, status_pb2
 from pythonjsonlogger import json as jsonlogger
 
+from envoy_authz.identity import parse_client_identity
+
 handler = logging.StreamHandler(stream=sys.stdout)
 handler.setFormatter(jsonlogger.JsonFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[handler])
@@ -66,24 +68,26 @@ def load_config() -> Config:
     )
 
 
-def verify_client_cert(cert_pem: str, store: crypto.X509Store) -> bool:
+def verify_client_cert(
+    cert_pem: str, store: crypto.X509Store
+) -> x509.Certificate | None:
     """
-    Verify client certificate against CA.
+    Verify a client certificate against the CA + CRL and require the clientAuth
+    EKU. Returns the verified certificate, or None on any failure.
     """
     try:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem.encode())
         crypto.X509StoreContext(store, cert).verify_certificate()
 
-        eku = cert.to_cryptography().extensions.get_extension_for_class(
-            x509.ExtendedKeyUsage
-        )
+        crypto_cert = cert.to_cryptography()
+        eku = crypto_cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
         if ExtendedKeyUsageOID.CLIENT_AUTH not in eku.value:
-            return False
+            return None
 
-        return True
+        return crypto_cert
     except Exception:
         logger.exception("Client cert verification failed")
-        return False
+        return None
 
 
 class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
@@ -108,21 +112,37 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
         )
         logger.debug("Headers: %s", headers)
 
+        # Verify the client cert once (if provided) and reuse the result.
+        raw_certificate = request.attributes.source.certificate
+        client_cert = None
+        if raw_certificate:
+            client_cert = verify_client_cert(
+                urllib.parse.unquote(raw_certificate),
+                self._config.ha_ca_store,
+            )
+
         # Figure out if a request should be allowed (can be arbitrary criteria)
         allowed = (
             # Requests to the frigate metrics endpoint don't need auth
             request.attributes.request.http.host == FRIGATE_HOST
             and path == "/api/metrics"
         ) or (
-            # Requests should contain a valid client certificate from the Home Assistant CA
-            verify_client_cert(
-                urllib.parse.unquote(request.attributes.source.certificate),
-                self._config.ha_ca_store,
-            )
+            # Requests should contain a valid client certificate from the
+            # Home Assistant CA
+            client_cert is not None
         )
 
         if allowed:
-            logger.info("✓ Authorized")
+            log_extra: dict = {}
+            # Parsing is best-effort and must never affect the decision.
+            if client_cert is not None:
+                try:
+                    log_extra["identity"] = parse_client_identity(
+                        client_cert
+                    ).model_dump(exclude_none=True)
+                except Exception:
+                    logger.exception("Failed to parse client identity")
+            logger.info("✓ Authorized", extra=log_extra)
 
             return_headers: list[HeaderValueOption] = []
 
