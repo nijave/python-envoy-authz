@@ -126,6 +126,32 @@ def test_wrong_eku_client_cert_denied(stub, check_request, wrong_eku_client_cert
     _assert_denied(response)
 
 
+def test_authorized_cert_logs_identity(
+    stub, check_request, trusted_client_cert_pem, caplog
+):
+    """A verified client cert produces an Authorized log line whose extra
+    carries the parsed identity (common_name + clientAuth EKU)."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="envoy_authz.app"):
+        response = stub.Check(
+            check_request(
+                host="other.example.com",
+                path="/",
+                client_cert_pem=trusted_client_cert_pem,
+            )
+        )
+
+    assert response.status.code == code_pb2.OK
+    identity_records = [
+        r for r in caplog.records if getattr(r, "identity", None) is not None
+    ]
+    assert identity_records, "expected an Authorized log record with identity"
+    identity = identity_records[-1].identity
+    assert identity["common_name"] == "trusted-client.ha.apps.somemissing.info"
+    assert "clientAuth" in identity["extended_key_usages"]
+
+
 def test_revoked_client_cert_denied(stub, check_request, revoked_client_cert_pem):
     """A cert signed by the trusted CA but listed in the CRL must be rejected."""
     response = stub.Check(
