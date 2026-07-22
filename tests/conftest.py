@@ -16,9 +16,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from envoy_authz import app
-from envoy_authz.app import AuthorizationService, Config
-from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+from envoy_authz.config import Config, build_store
+from envoy_authz.grpc_service import register_services
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from envoy.service.auth.v3 import (
     external_auth_pb2,
     external_auth_pb2_grpc,
@@ -296,7 +296,7 @@ _CRL = _build_crl(_TRUSTED_CA_KEY, _TRUSTED_CA, [_REVOKED_CLIENT_CERT.serial_num
 
 @pytest.fixture(scope="session")
 def ha_config() -> Config:
-    store = app.build_store(
+    store = build_store(
         _pem(_TRUSTED_CA),
         _CRL.public_bytes(serialization.Encoding.PEM).decode(),
     )
@@ -309,11 +309,7 @@ def ha_config() -> Config:
 @pytest.fixture(scope="session")
 def grpc_server(ha_config):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    external_auth_pb2_grpc.add_AuthorizationServicer_to_server(
-        AuthorizationService(ha_config), server
-    )
-    health_servicer = health.HealthServicer()
-    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    health_servicer = register_services(server, ha_config)
     credentials = grpc.ssl_server_credentials(
         [(_pem_key(_SERVER_KEY), _pem_bytes(_SERVER_CERT))]
     )

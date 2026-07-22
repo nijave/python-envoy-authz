@@ -3,7 +3,7 @@
 from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2
 
-from envoy_authz.app import FRIGATE_HOST
+from envoy_authz.grpc_service import FRIGATE_HOST
 
 
 def _header_value(response, key: str) -> str | None:
@@ -133,7 +133,7 @@ def test_authorized_cert_logs_identity(
     carries the parsed identity (common_name + clientAuth EKU)."""
     import logging
 
-    with caplog.at_level(logging.INFO, logger="envoy_authz.app"):
+    with caplog.at_level(logging.INFO, logger="envoy_authz.grpc_service"):
         response = stub.Check(
             check_request(
                 host="other.example.com",
@@ -159,14 +159,14 @@ def test_authorized_cert_parse_failure_does_not_deny(
     failure logged — parsing is best-effort and never affects the decision."""
     import logging
 
-    from envoy_authz import app as app_module
+    from envoy_authz import grpc_service
 
     def _boom(_cert):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(app_module, "parse_client_identity", _boom)
+    monkeypatch.setattr(grpc_service, "parse_client_identity", _boom)
 
-    with caplog.at_level(logging.INFO, logger="envoy_authz.app"):
+    with caplog.at_level(logging.INFO, logger="envoy_authz.grpc_service"):
         response = stub.Check(
             check_request(
                 host="other.example.com",
