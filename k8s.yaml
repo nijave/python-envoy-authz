@@ -68,6 +68,9 @@ spec:
           - name: grpc
             protocol: TCP
             containerPort: 5000
+          - name: http
+            protocol: TCP
+            containerPort: 5001
         livenessProbe:
           exec:
             command:
@@ -86,6 +89,14 @@ spec:
               - -tls-no-verify
           initialDelaySeconds: 3
           periodSeconds: 5
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 5001
+            scheme: HTTPS
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          failureThreshold: 6
         volumeMounts:
           - name: certificate
             mountPath: /var/lib/tls
@@ -107,6 +118,10 @@ spec:
       port: 443
       protocol: TCP
       targetPort: 5000
+    - name: http
+      port: 5001
+      protocol: TCP
+      targetPort: 5001
   selector:
     app: python-envoy-authz
 ---
