@@ -1,3 +1,7 @@
+# NOTE: This is an EXAMPLE manifest, not the live deployment. The real
+# deployment is maintained out-of-tree; this file exists to illustrate how to
+# run python-envoy-authz on Kubernetes. Adapt names, namespaces, secrets, and
+# the OTEL_* values below to your environment before applying.
 ---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -64,6 +68,13 @@ spec:
               secretKeyRef:
                 name: ca-ha-homelab-somemissing-info-tls
                 key: ca.crt
+          # Example OpenTelemetry config. Tracing is opt-in: it stays disabled
+          # until OTEL_EXPORTER_OTLP_ENDPOINT is set. Point this at your own
+          # OTLP/gRPC collector (this value is an example placeholder).
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://otel-collector.observability:4317"
+          - name: OTEL_SERVICE_NAME
+            value: "python-envoy-authz"
         ports:
           - name: grpc
             protocol: TCP
