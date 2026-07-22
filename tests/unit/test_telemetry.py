@@ -42,14 +42,22 @@ def test_setup_builds_and_installs_provider_when_enabled(monkeypatch):
         telemetry.trace, "set_tracer_provider", lambda p: installed.append(p)
     )
     provider = telemetry.setup_telemetry()
-    assert isinstance(provider, TracerProvider)
-    assert installed == [provider]
+    try:
+        assert isinstance(provider, TracerProvider)
+        assert installed == [provider]
+    finally:
+        # Shut down the real BatchSpanProcessor so no daemon export thread
+        # lingers for the rest of the test process (empty queue -> no export).
+        provider.shutdown()
 
 
 def test_build_provider_sets_default_service_name(monkeypatch):
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
     provider = telemetry.build_tracer_provider()
-    assert provider.resource.attributes[SERVICE_NAME] == "python-envoy-authz"
+    try:
+        assert provider.resource.attributes[SERVICE_NAME] == "python-envoy-authz"
+    finally:
+        provider.shutdown()
 
 
 def test_setup_failure_is_non_fatal(monkeypatch):

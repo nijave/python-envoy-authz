@@ -75,6 +75,11 @@ spec:
             value: "http://otel-collector.observability:4317"
           - name: OTEL_SERVICE_NAME
             value: "python-envoy-authz"
+          # Drop the /healthz probe requests from traces so k8s health checks
+          # don't flood the backend with spans. Honored automatically by the
+          # FastAPI instrumentor; matched as a substring of the request path.
+          - name: OTEL_PYTHON_FASTAPI_EXCLUDED_URLS
+            value: "healthz"
         ports:
           - name: grpc
             protocol: TCP
