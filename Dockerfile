@@ -23,5 +23,5 @@ COPY pyproject.toml poetry.lock README.md /app/
 RUN /root/.local/bin/poetry install --no-root --only main
 
 COPY . /app
-EXPOSE 5000
-CMD ["/root/.local/bin/poetry", "run", "python3", "envoy_authz/app.py"]
+EXPOSE 5000 5001
+CMD ["/root/.local/bin/poetry", "run", "python3", "-m", "envoy_authz"]
