@@ -2,6 +2,7 @@ import logging
 import urllib.parse
 
 import grpc
+from cryptography import x509
 from grpc_health.v1 import health, health_pb2_grpc
 from envoy.config.core.v3.base_pb2 import HeaderValueOption, HeaderValue
 from envoy.service.auth.v3 import external_auth_pb2
@@ -20,15 +21,22 @@ FRIGATE_HOST = "frigate.apps.somemissing.info"
 
 
 def _record_span(
-    *, allowed: bool, host: str, path: str, frigate_bypass: bool, client_cert
+    *,
+    allowed: bool,
+    host: str,
+    path: str,
+    frigate_bypass: bool,
+    client_cert: x509.Certificate | None,
 ) -> None:
     """Annotate the current span with the authz decision (best-effort).
 
     A tracing failure must never affect the decision, so everything here is
-    wrapped and swallowed. When telemetry is disabled the current span is a
-    no-op and every set_attribute call is a cheap no-op.
+    wrapped and swallowed. When telemetry is disabled or the span is sampled
+    out, it returns early since the span is not recording.
     """
     span = trace.get_current_span()
+    if not span.is_recording():
+        return
     try:
         span.set_attribute("authz.allowed", allowed)
         span.set_attribute("authz.host", host)
