@@ -1,15 +1,13 @@
 """Best-effort extraction of identity attributes from a verified X.509 client
 certificate into a validated Pydantic model.
 
-Every field is optional: X.509 subject attributes and SAN entries are all
-optional, so a certificate may carry any subset. The `parse_client_identity`
-extractor validates each field independently and drops (logging) any value that
-fails validation, so a single malformed attribute never loses the rest of the
-identity.
+Every attribute is optional, so a certificate may carry any subset.
+`ClientIdentity` validates each field independently and drops (logging) any
+value that fails, so one malformed attribute never loses the rest.
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from cryptography import x509
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID, ObjectIdentifier
@@ -18,9 +16,12 @@ from pydantic import (
     BaseModel,
     Field,
     StringConstraints,
-    TypeAdapter,
     ValidationError,
+    ValidationInfo,
+    WrapValidator,
+    field_validator,
 )
+from pydantic_core.core_schema import ValidatorFunctionWrapHandler
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,7 @@ def _validate_email(value: str) -> str:
     return address.lower()
 
 
-# Shared constraint aliases — the single source of truth for per-field bounds,
-# reused by both the model below and the per-field TypeAdapters in the extractor.
+# Shared constraint aliases — single source of truth for per-field bounds.
 CommonName = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
 ]
@@ -82,10 +82,45 @@ Email = Annotated[
 ]
 
 
+# Sentinel marking a list item that failed validation, pruned by `_prune`.
+_DROP = object()
+
+
+def _drop_item(
+    value: Any, handler: ValidatorFunctionWrapHandler, info: ValidationInfo
+) -> Any:
+    """Mark (logging) an invalid list item for pruning, keeping the rest."""
+    try:
+        return handler(value)
+    except ValidationError as exc:
+        logger.warning(
+            "Dropping invalid client-cert field %s: %s",
+            info.field_name,
+            exc.errors()[0]["msg"],
+        )
+        return _DROP
+
+
+def _prune(values: list[Any]) -> list[Any]:
+    return [v for v in values if v is not _DROP]
+
+
+# Lists holding only the items that passed validation; invalid items are
+# dropped rather than rejecting the whole list.
+ValidatedOrgUnits = Annotated[
+    list[Annotated[OrgName, WrapValidator(_drop_item)]], AfterValidator(_prune)
+]
+ValidatedEmails = Annotated[
+    list[Annotated[Email, WrapValidator(_drop_item)]], AfterValidator(_prune)
+]
+
+
 class ClientIdentity(BaseModel):
     """Identity and key-policy attributes extracted from a client certificate.
 
-    Every field is optional; absent attributes stay None / empty list.
+    Best-effort: every field is optional, and any value that fails validation
+    is dropped (logging) rather than raising, so one malformed attribute never
+    loses the rest.
     """
 
     common_name: CommonName | None = None
@@ -93,14 +128,32 @@ class ClientIdentity(BaseModel):
     given_name: Name | None = None
     display_name: DisplayName | None = None
     organization: OrgName | None = None
-    organizational_units: list[OrgName] = Field(default_factory=list)
+    organizational_units: ValidatedOrgUnits = Field(default_factory=list)
     uid: Uid | None = None
     primary_email: Email | None = None
-    additional_email_addresses: list[Email] = Field(default_factory=list)
+    additional_email_addresses: ValidatedEmails = Field(default_factory=list)
     is_ca: bool | None = None
     path_length: Annotated[int, Field(ge=0)] | None = None
     key_usages: list[str] = Field(default_factory=list)
     extended_key_usages: list[str] = Field(default_factory=list)
+
+    @field_validator("*", mode="wrap")
+    @classmethod
+    def _drop_invalid(
+        cls, value: Any, handler: ValidatorFunctionWrapHandler, info: ValidationInfo
+    ) -> Any:
+        """Drop (logging) any scalar that fails validation to None. All fields
+        are optional so None is valid; list fields prune bad items internally
+        and don't raise here."""
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            logger.warning(
+                "Dropping invalid client-cert field %s: %s",
+                info.field_name,
+                exc.errors()[0]["msg"],
+            )
+            return None
 
 
 # Subject DN attribute OIDs. displayName uses the inetOrgPerson OID
@@ -131,19 +184,6 @@ _KEY_USAGE_FLAGS = (
     "key_cert_sign",
     "crl_sign",
 )
-
-# Per-field validators, keyed by ClientIdentity field name, reusing the shared
-# constraint aliases so the model stays the single source of truth.
-_SCALAR_ADAPTERS: dict[str, TypeAdapter] = {
-    "common_name": TypeAdapter(CommonName),
-    "surname": TypeAdapter(Name),
-    "given_name": TypeAdapter(Name),
-    "display_name": TypeAdapter(DisplayName),
-    "organization": TypeAdapter(OrgName),
-    "uid": TypeAdapter(Uid),
-}
-_ORG_UNIT_ADAPTER: TypeAdapter = TypeAdapter(OrgName)
-_EMAIL_ADAPTER: TypeAdapter = TypeAdapter(Email)
 
 
 def _first_attr(name: x509.Name, oid: ObjectIdentifier) -> str | None:
@@ -198,72 +238,28 @@ def _basic_constraints(cert: x509.Certificate) -> tuple[bool | None, int | None]
     return bc.ca, bc.path_length
 
 
-def _validate_scalar(field: str, adapter: TypeAdapter, value: str) -> str | None:
-    try:
-        return adapter.validate_python(value)
-    except ValidationError as exc:
-        logger.warning(
-            "Dropping invalid client-cert field %s: %s",
-            field,
-            exc.errors()[0]["msg"],
-        )
-        return None
-
-
-def _validate_list(field: str, adapter: TypeAdapter, values: list[str]) -> list[str]:
-    validated: list[str] = []
-    for value in values:
-        result = _validate_scalar(field, adapter, value)
-        if result is not None:
-            validated.append(result)
-    return validated
-
-
 def parse_client_identity(cert: x509.Certificate) -> ClientIdentity:
-    """Best-effort extraction of identity attributes from a verified cert.
-
-    Each field is validated independently; values that fail validation are
-    dropped (and logged), so a single malformed attribute never loses the rest.
-    """
+    """Read the raw attributes off a verified cert into a `ClientIdentity`."""
     subject = cert.subject
     is_ca, path_length = _basic_constraints(cert)
     emails = _san_emails(cert)
 
-    raw_scalars = {
-        "common_name": _first_attr(subject, NameOID.COMMON_NAME),
-        "surname": _first_attr(subject, NameOID.SURNAME),
-        "given_name": _first_attr(subject, NameOID.GIVEN_NAME),
-        "display_name": _first_attr(subject, _OID_DISPLAY_NAME),
-        "organization": _first_attr(subject, NameOID.ORGANIZATION_NAME),
-        "uid": _first_attr(subject, NameOID.USER_ID),
-    }
-
-    kwargs: dict = {
-        "is_ca": is_ca,
-        "path_length": path_length,
-        "organizational_units": _validate_list(
-            "organizational_units",
-            _ORG_UNIT_ADAPTER,
-            _all_str_attrs(subject, NameOID.ORGANIZATIONAL_UNIT_NAME),
-        ),
-        "key_usages": _key_usages(cert),
-        "extended_key_usages": _extended_key_usages(cert),
-    }
-
-    for field, adapter in _SCALAR_ADAPTERS.items():
-        value = raw_scalars[field]
-        if value is None:
-            continue
-        validated = _validate_scalar(field, adapter, value)
-        if validated is not None:
-            kwargs[field] = validated
-
-    if emails:
-        primary = _validate_scalar("primary_email", _EMAIL_ADAPTER, emails[0])
-        if primary is not None:
-            kwargs["primary_email"] = primary
-        kwargs["additional_email_addresses"] = _validate_list(
-            "additional_email_addresses", _EMAIL_ADAPTER, emails[1:]
-        )
-
-    return ClientIdentity(**kwargs)
+    return ClientIdentity.model_validate(
+        {
+            "common_name": _first_attr(subject, NameOID.COMMON_NAME),
+            "surname": _first_attr(subject, NameOID.SURNAME),
+            "given_name": _first_attr(subject, NameOID.GIVEN_NAME),
+            "display_name": _first_attr(subject, _OID_DISPLAY_NAME),
+            "organization": _first_attr(subject, NameOID.ORGANIZATION_NAME),
+            "organizational_units": _all_str_attrs(
+                subject, NameOID.ORGANIZATIONAL_UNIT_NAME
+            ),
+            "uid": _first_attr(subject, NameOID.USER_ID),
+            "primary_email": emails[0] if emails else None,
+            "additional_email_addresses": emails[1:],
+            "is_ca": is_ca,
+            "path_length": path_length,
+            "key_usages": _key_usages(cert),
+            "extended_key_usages": _extended_key_usages(cert),
+        }
+    )

@@ -1,7 +1,6 @@
 """Unit tests for the ClientIdentity Pydantic model and email validation."""
 
 import pytest
-from pydantic import ValidationError
 
 from envoy_authz.identity import ClientIdentity, _validate_email
 
@@ -28,19 +27,20 @@ def test_valid_fields_accepted_and_stripped():
     assert identity.uid == "jdoe"
 
 
-def test_common_name_over_64_rejected():
-    with pytest.raises(ValidationError):
-        ClientIdentity(common_name="x" * 65)
+def test_common_name_over_64_dropped():
+    # The model is best-effort: an invalid attribute is dropped to None rather
+    # than raising, so the rest of the identity survives.
+    identity = ClientIdentity(common_name="x" * 65, organization="ACME")
+    assert identity.common_name is None
+    assert identity.organization == "ACME"
 
 
-def test_empty_string_common_name_rejected():
-    with pytest.raises(ValidationError):
-        ClientIdentity(common_name="   ")
+def test_empty_string_common_name_dropped():
+    assert ClientIdentity(common_name="   ").common_name is None
 
 
-def test_path_length_negative_rejected():
-    with pytest.raises(ValidationError):
-        ClientIdentity(path_length=-1)
+def test_path_length_negative_dropped():
+    assert ClientIdentity(path_length=-1).path_length is None
 
 
 @pytest.mark.parametrize(
@@ -76,6 +76,17 @@ def test_validate_email_rejects_invalid(address):
         _validate_email(address)
 
 
-def test_model_rejects_invalid_email():
-    with pytest.raises(ValidationError):
-        ClientIdentity(primary_email="not-an-email")
+def test_model_drops_invalid_email():
+    assert ClientIdentity(primary_email="not-an-email").primary_email is None
+
+
+def test_model_drops_invalid_list_items_keeps_valid():
+    identity = ClientIdentity(
+        organizational_units=["eng", "x" * 65, "sre"],
+        additional_email_addresses=["good@example.com", "bad", "two@example.org"],
+    )
+    assert identity.organizational_units == ["eng", "sre"]
+    assert identity.additional_email_addresses == [
+        "good@example.com",
+        "two@example.org",
+    ]
