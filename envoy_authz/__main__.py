@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import logging
 import os
@@ -5,9 +6,10 @@ from concurrent import futures
 
 import grpc
 import uvicorn
-from grpc_health.v1 import health_pb2
+from fastapi import FastAPI
+from grpc_health.v1 import health, health_pb2
 
-from .config import load_config
+from .config import Config, load_config
 from .grpc_service import register_services
 from .http_app import create_app
 
@@ -19,7 +21,7 @@ TLS_CERT_PATH = os.environ.get("TLS_CERT_PATH", "/var/lib/tls/tls.crt")
 TLS_KEY_PATH = os.environ.get("TLS_KEY_PATH", "/var/lib/tls/tls.key")
 
 
-def build_grpc_server(config):
+def build_grpc_server(config: Config) -> tuple[grpc.Server, health.HealthServicer]:
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     health_servicer = register_services(server, config)
 
@@ -34,19 +36,20 @@ def build_grpc_server(config):
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app):
+async def lifespan(app: FastAPI):
     config = load_config()
     server, health_servicer = build_grpc_server(config)
-    server.start()
-    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
-    logger.info("Secure gRPC server started on port %s", GRPC_PORT)
-    app.state.config = config
     try:
+        server.start()
+        health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+        logger.info("Secure gRPC server started on port %s", GRPC_PORT)
+        app.state.config = config
         yield
     finally:
         logger.info("Draining gRPC server...")
         health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
-        server.stop(grace=10)
+        stopped = server.stop(grace=10)
+        await asyncio.to_thread(stopped.wait)
 
 
 def main():
