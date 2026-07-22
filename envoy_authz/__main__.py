@@ -12,6 +12,11 @@ from grpc_health.v1 import health, health_pb2
 from .config import Config, load_config
 from .grpc_service import register_services
 from .http_app import create_app
+from .telemetry import (
+    instrument_fastapi,
+    instrument_grpc_server,
+    setup_telemetry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +55,20 @@ async def lifespan(app: FastAPI):
         health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
         stopped = server.stop(grace=10)
         await asyncio.to_thread(stopped.wait)
+        provider = getattr(app.state, "tracer_provider", None)
+        if provider is not None:
+            provider.shutdown()
 
 
 def main():
+    provider = setup_telemetry()
+    if provider is not None:
+        # Must patch grpc.server before build_grpc_server runs in the lifespan.
+        instrument_grpc_server()
     app = create_app(lifespan=lifespan)
+    if provider is not None:
+        instrument_fastapi(app)
+    app.state.tracer_provider = provider
     logger.info("Starting HTTPS server on port %s", HTTP_PORT)
     uvicorn.run(
         app,

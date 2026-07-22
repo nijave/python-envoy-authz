@@ -34,3 +34,68 @@ def test_lifespan_starts_and_drains_grpc_server(monkeypatch):
         "", health_pb2.HealthCheckResponse.NOT_SERVING
     )
     fake_server.stop.assert_called_once_with(grace=10)
+
+
+def test_main_sets_up_and_instruments_when_enabled(monkeypatch):
+    fake_provider = MagicMock()
+    calls = []
+    fake_app = MagicMock()
+
+    monkeypatch.setattr(main_module, "setup_telemetry", lambda: fake_provider)
+    monkeypatch.setattr(
+        main_module, "instrument_grpc_server", lambda: calls.append("grpc")
+    )
+    monkeypatch.setattr(
+        main_module, "instrument_fastapi", lambda app: calls.append("fastapi")
+    )
+    monkeypatch.setattr(main_module, "create_app", lambda lifespan: fake_app)
+    monkeypatch.setattr(main_module.uvicorn, "run", lambda *a, **k: None)
+
+    main_module.main()
+
+    # gRPC instrumentor runs before FastAPI (must patch grpc.server pre-build).
+    assert calls == ["grpc", "fastapi"]
+    assert fake_app.state.tracer_provider is fake_provider
+
+
+def test_main_skips_instrumentation_when_disabled(monkeypatch):
+    calls = []
+    fake_app = MagicMock()
+
+    monkeypatch.setattr(main_module, "setup_telemetry", lambda: None)
+    monkeypatch.setattr(
+        main_module, "instrument_grpc_server", lambda: calls.append("grpc")
+    )
+    monkeypatch.setattr(
+        main_module, "instrument_fastapi", lambda app: calls.append("fastapi")
+    )
+    monkeypatch.setattr(main_module, "create_app", lambda lifespan: fake_app)
+    monkeypatch.setattr(main_module.uvicorn, "run", lambda *a, **k: None)
+
+    main_module.main()
+
+    assert calls == []
+    assert fake_app.state.tracer_provider is None
+
+
+def test_lifespan_flushes_tracer_provider(monkeypatch):
+    fake_config = object()
+    fake_server = MagicMock()
+    fake_health = MagicMock()
+    fake_provider = MagicMock()
+
+    monkeypatch.setattr(main_module, "load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        main_module, "build_grpc_server", lambda config: (fake_server, fake_health)
+    )
+
+    app = MagicMock()
+    app.state.tracer_provider = fake_provider
+
+    async def run():
+        async with main_module.lifespan(app):
+            pass
+
+    asyncio.run(run())
+
+    fake_provider.shutdown.assert_called_once_with()
