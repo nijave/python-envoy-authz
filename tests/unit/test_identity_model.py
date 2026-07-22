@@ -63,8 +63,12 @@ def test_validate_email_normalizes(address, expected):
         "a@b@example.com",
         "<jdoe@example.com>",
         "jdoé@example.com",  # non-ASCII
+        "jdoe@",  # empty domain
+        "@example.com",  # empty local-part
         ("x" * 65) + "@example.com",  # local-part > 64
         "jdoe@" + ("d" * 256) + ".com",  # domain > 255
+        # total > 254 while local <= 64 and domain <= 255
+        ("x" * 64) + "@" + ("d" * 186) + ".com",
     ],
 )
 def test_validate_email_rejects_invalid(address):

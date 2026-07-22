@@ -152,6 +152,35 @@ def test_authorized_cert_logs_identity(
     assert "clientAuth" in identity["extended_key_usages"]
 
 
+def test_authorized_cert_parse_failure_does_not_deny(
+    stub, check_request, trusted_client_cert_pem, caplog, monkeypatch
+):
+    """If identity parsing raises, the request must still be authorized and the
+    failure logged — parsing is best-effort and never affects the decision."""
+    import logging
+
+    from envoy_authz import app as app_module
+
+    def _boom(_cert):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(app_module, "parse_client_identity", _boom)
+
+    with caplog.at_level(logging.INFO, logger="envoy_authz.app"):
+        response = stub.Check(
+            check_request(
+                host="other.example.com",
+                path="/",
+                client_cert_pem=trusted_client_cert_pem,
+            )
+        )
+
+    assert response.status.code == code_pb2.OK
+    assert any(
+        "Failed to parse client identity" in r.getMessage() for r in caplog.records
+    )
+
+
 def test_revoked_client_cert_denied(stub, check_request, revoked_client_cert_pem):
     """A cert signed by the trusted CA but listed in the CRL must be rejected."""
     response = stub.Check(
