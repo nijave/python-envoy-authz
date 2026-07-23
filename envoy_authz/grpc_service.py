@@ -2,12 +2,14 @@ import logging
 import urllib.parse
 
 import grpc
+from cryptography import x509
 from grpc_health.v1 import health, health_pb2_grpc
 from envoy.config.core.v3.base_pb2 import HeaderValueOption, HeaderValue
 from envoy.service.auth.v3 import external_auth_pb2
 from envoy.service.auth.v3 import external_auth_pb2_grpc
 from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2, status_pb2
+from opentelemetry import trace
 
 from envoy_authz.identity import parse_client_identity
 
@@ -16,6 +18,39 @@ from .config import Config, verify_client_cert
 logger = logging.getLogger(__name__)
 
 FRIGATE_HOST = "frigate.apps.somemissing.info"
+
+
+def _record_span(
+    *,
+    allowed: bool,
+    host: str,
+    path: str,
+    frigate_bypass: bool,
+    client_cert: x509.Certificate | None,
+) -> None:
+    """Annotate the current span with the authz decision (best-effort).
+
+    A tracing failure must never affect the decision, so everything here is
+    wrapped and swallowed. When telemetry is disabled or the span is sampled
+    out, it returns early since the span is not recording.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    try:
+        span.set_attribute("authz.allowed", allowed)
+        span.set_attribute("authz.host", host)
+        span.set_attribute("authz.path", path)
+        span.set_attribute("authz.frigate_metrics_bypass", frigate_bypass)
+        if client_cert is not None:
+            identity = parse_client_identity(client_cert).model_dump(exclude_none=True)
+            for key, value in identity.items():
+                # Skip empty lists; OTel rejects ambiguous empty sequences.
+                if isinstance(value, list) and not value:
+                    continue
+                span.set_attribute(f"authz.identity.{key}", value)
+    except Exception:
+        logger.exception("Failed to record authz span attributes")
 
 
 class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
@@ -50,14 +85,23 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
             )
 
         # Figure out if a request should be allowed (can be arbitrary criteria)
-        allowed = (
+        frigate_metrics_bypass = (
             # Requests to the frigate metrics endpoint don't need auth
             request.attributes.request.http.host == FRIGATE_HOST
             and path == "/api/metrics"
-        ) or (
+        )
+        allowed = frigate_metrics_bypass or (
             # Requests should contain a valid client certificate from the
             # Home Assistant CA
             client_cert is not None
+        )
+
+        _record_span(
+            allowed=allowed,
+            host=request.attributes.request.http.host,
+            path=path,
+            frigate_bypass=frigate_metrics_bypass,
+            client_cert=client_cert,
         )
 
         if allowed:
