@@ -247,14 +247,29 @@ implements the framework hooks the Flask integration would have provided:
 - `get_error_uri(request, error)` → return `None`.
 - Token generator: wired manually via `register_token_generator("default",
   BearerTokenGenerator(...))` (no Flask `app.config`), with
-  `OAUTH2_REFRESH_TOKEN_GENERATOR` semantics replicated by passing
-  `refresh_token_generator=True`.
+  `OAUTH2_REFRESH_TOKEN_GENERATOR` semantics replicated by passing a
+  refresh-token generator.
+- **`UserInfoEndpoint` does not port directly.** authlib's
+  `authlib.oidc.core.UserInfoEndpoint.__call__` calls
+  `resource_protector.acquire_token("openid")` with no request arg — but
+  `acquire_token` is a **Flask-only** method (reads the `flask.request`
+  global). The framework-agnostic base `ResourceProtector` only exposes
+  `validate_request(scopes, request)`. So `op/server.py` subclasses
+  `UserInfoEndpoint` and overrides `__call__` to call
+  `resource_protector.validate_request(["openid"], request)` (passing our
+  `StarletteOAuth2Request`, which carries the `Authorization` header), then
+  builds the JSON userinfo response itself (the signed-userinfo branch is
+  YAGNI — Vikunja does not request signed userinfo). The `ResourceProtector`
+  used is the framework-agnostic base (`authlib.oauth2.rfc6750.ResourceProtector`)
+  with an `InMemoryBearerTokenValidator` whose `authenticate_token` calls
+  `query_token`.
 
-**Async wrinkle:** `create_token_response` is synchronous, but Starlette
-form/JSON parsing is async. The FastAPI route handlers pre-parse the body
-(`await request.form()` or `await request.json()`) and pass the parsed dict
-into the request adapter, so the sync `create_token_response` never awaits.
-This is ~60-80 lines of glue, all in `op/server.py` + a small `op/requests.py`.
+**Async wrinkle:** `create_token_response` and `create_endpoint_response` are
+synchronous, but Starlette form/JSON parsing is async. The FastAPI route
+handlers pre-parse the body (`await request.form()` / `await request.json()`)
+and pass the parsed dict into the request adapter, so the sync authlib calls
+never await. This is ~80-100 lines of glue across `op/server.py` +
+`op/requests.py`.
 
 ## Config & settings
 
