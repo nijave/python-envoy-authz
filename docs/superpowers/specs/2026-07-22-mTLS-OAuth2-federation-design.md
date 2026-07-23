@@ -142,8 +142,9 @@ envoy_authz/
 ├── identity.py           # ClientIdentity (unchanged)
 │
 ├── op/                   # NEW — OIDC Provider (ported from python-client-idp/app/idp)
-│   ├── __init__.py        # init_op(app) — Starlette authlib AuthorizationServer wiring
-│   ├── server.py         # AuthorizationServer + grant registration (Starlette flavor)
+│   ├── __init__.py        # init_op(app) — register the OP APIRouter on the FastAPI app
+│   ├── server.py         # Starlette AuthorizationServer glue (subclasses base; see below)
+│   ├── requests.py       # StarletteOAuth2Request / StarletteJsonRequest adapters
 │   ├── grants.py         # AuthorizationCodeGrant / OpenIDCode / RefreshTokenGrant
 │   ├── routes.py         # discovery, /jwks.json, /oauth/token, /oauth/userinfo (APIRouter)
 │   └── keys.py           # RSA signing key load/generate, JWKS (ported; joserfc dep)
@@ -164,10 +165,17 @@ envoy_authz/
 - **`op/`** — "be an OIDC Provider so Vikunja can do a standard code exchange."
   Depends only on authlib + `keys.py` + the store's `query_client`/`save_token`
   /code helpers. No knowledge of Envoy, mTLS, or Vikunja. Pure port of the
-  source `app/idp/`, rewritten from Flask+authlib-flask to Starlette/FastAPI +
-  authlib's Starlette integration (the grant classes are framework-agnostic;
-  only the `AuthorizationServer` wiring changes). No `/oauth/authorize` route
-  (the federator mints codes directly, same as the source broker).
+  source `app/idp/`, rewritten from Flask to Starlette/FastAPI. **Note: authlib
+  1.7.2 ships no Starlette/FastAPI AuthorizationServer integration** — only
+  `starlette_client` (the OIDC *client*). The grant classes
+  (`AuthorizationCodeGrant`, `OpenIDCode`, `RefreshTokenGrant`) are
+  framework-agnostic and port directly; only the `AuthorizationServer` wiring
+  is framework-specific. So `op/server.py` subclasses authlib's
+  framework-agnostic **base** `authlib.oauth2.rfc6749.AuthorizationServer` and
+  implements ~6 small Starlette adapter methods itself (see *OP framework glue*
+  below), rather than using a non-existent Starlette integration. No
+  `/oauth/authorize` route (the federator mints codes directly, same as the
+  source broker).
 - **`federator/subject.py`** — "turn a verified cert into a stable `sub` +
   email." Depends only on the `cryptography` cert. Pure function. Replaces the
   source's `get_or_create_user_by_email` in-memory counter with a deterministic
@@ -218,6 +226,35 @@ envoy_authz/
 The Flask `broker/` blueprints and `http_debug.py` from python-client-idp —
 their job is now `federator/session.py` + `vikunja.py`, triggered by gRPC, not
 an HTTP route. And `niquests` → `httpx`.
+
+### OP framework glue (authlib has no Starlette AuthorizationServer)
+
+authlib 1.7.2 provides `flask_oauth2` and `django_oauth2` authorization-server
+integrations but **no Starlette/FastAPI one** (`starlette_client` is the OIDC
+client only). The framework-agnostic base is
+`authlib.oauth2.rfc6749.AuthorizationServer`. `op/server.py` subclasses it and
+implements the framework hooks the Flask integration would have provided:
+
+- `create_oauth2_request(request)` → wrap the Starlette `Request` in a
+  `StarletteOAuth2Request` (subclass of `authlib.oauth2.rfc6749.OAuth2Request`)
+  whose payload is a `BasicOAuth2Payload` over a merged dict of query params +
+  parsed form/json body. `args`/`form` return the parsed dicts.
+- `create_json_request(request)` → a `StarletteJsonRequest` (subclass of
+  `JsonRequest`) whose payload is built from the pre-parsed JSON body.
+- `handle_response(status, payload, headers)` → return a Starlette
+  `JSONResponse` (or `Response` for non-JSON payloads).
+- `send_signal(name, *args, **kwargs)` → no-op (we use no Flask signals).
+- `get_error_uri(request, error)` → return `None`.
+- Token generator: wired manually via `register_token_generator("default",
+  BearerTokenGenerator(...))` (no Flask `app.config`), with
+  `OAUTH2_REFRESH_TOKEN_GENERATOR` semantics replicated by passing
+  `refresh_token_generator=True`.
+
+**Async wrinkle:** `create_token_response` is synchronous, but Starlette
+form/JSON parsing is async. The FastAPI route handlers pre-parse the body
+(`await request.form()` or `await request.json()`) and pass the parsed dict
+into the request adapter, so the sync `create_token_response` never awaits.
+This is ~60-80 lines of glue, all in `op/server.py` + a small `op/requests.py`.
 
 ## Config & settings
 
@@ -521,7 +558,8 @@ Each step is independently testable and committable.
 2. **Providers config.** Port `providers.py` + `providers.yaml` (with
    `extra.session_secret`) and `tests/test_providers.py`.
 3. **Subject derivation.** `federator/subject.py` + unit tests.
-4. **The OP (Flask→Starlette port).** `op/keys.py`, `op/server.py`,
+4. **The OP (Flask→Starlette port).** `op/keys.py`, `op/server.py` (incl. the
+   Starlette adapter glue — see *OP framework glue*), `op/requests.py`,
    `op/grants.py`, `op/routes.py`, `op/__init__.py`, and the OP-facing half of
    `federator/store.py`. Mount via `http_app.create_app` → `init_op`. Port
    `tests/test_idp.py`/`test_keys.py`/`test_store.py`. After this step the
