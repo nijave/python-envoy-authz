@@ -370,7 +370,15 @@ def health_stub(channel):
 def check_request():
     """Returns a builder for `CheckRequest` messages."""
 
-    def _build(*, host: str, path: str, client_cert_pem: str | None = None):
+    def _build(
+        *,
+        host: str,
+        path: str,
+        client_cert_pem: str | None = None,
+        headers: dict | None = None,
+        bearer: str | None = None,
+        refresh_cookie: str | None = None,
+    ):
         request = external_auth_pb2.CheckRequest()
         request.attributes.request.http.host = host
         request.attributes.request.http.path = path
@@ -378,6 +386,17 @@ def check_request():
             # Envoy URL-encodes the cert PEM in source.certificate
             request.attributes.source.certificate = urllib.parse.quote(
                 client_cert_pem, safe=""
+            )
+        if headers:
+            for k, v in headers.items():
+                request.attributes.request.http.headers[k] = v
+        if bearer:
+            request.attributes.request.http.headers["authorization"] = (
+                f"Bearer {bearer}"
+            )
+        if refresh_cookie:
+            request.attributes.request.http.headers["cookie"] = (
+                f"vikunja_refresh_token={refresh_cookie}"
             )
         return request
 
@@ -448,7 +467,7 @@ def frigate_secret() -> str:
 OP_PROVIDERS_YAML = """
 providers:
   vikunja:
-    hosts: ["vikunja.test"]
+    hosts: ["vikunja.example.com"]
     client_id: "vikunja"
     client_secret: "vikunja-secret"
     redirect_url: "http://localhost:3456/auth/openid/broker"
@@ -500,3 +519,38 @@ def op_client(tmp_path, monkeypatch):
     key_path = str(tmp_path / "op_key.pem")
     app = create_app(op_key_path=key_path, federation=_federation_settings(str(p)))
     return TestClient(app)
+
+
+@pytest.fixture
+def grpc_servicer(ha_config, check_request, tmp_path):
+    """In-process AuthorizationService with the federator wired, plus the
+    check_request builder. Does not start a real gRPC server.
+
+    Tears down the `_vikunja`/`_SESSIONS` module globals afterward so the
+    federator-unwired real-TLS integration suite keeps seeing them as None.
+    """
+    import types
+
+    from envoy_authz.federator import providers, store
+    from envoy_authz.federator.store import _reset, seed
+    from envoy_authz.grpc_service import AuthorizationService, init_federator
+
+    p = tmp_path / "providers.yaml"
+    p.write_text(OP_PROVIDERS_YAML)
+    providers.load_providers(str(p))
+    fed = _federation_settings(str(p))
+    store.configure(fed.secret_key, fed.code_ttl_seconds)
+    _reset()
+    seed()
+    init_federator("vikunja")  # wires _vikunja + _SESSIONS module globals
+
+    servicer = AuthorizationService(ha_config)  # real Config (ha_ca_store + secret)
+
+    yield types.SimpleNamespace(servicer=servicer, check_request=check_request)
+
+    # Reset module globals so the unwired state is restored for other suites
+    # (the integration tests rely on _vikunja/_SESSIONS being None).
+    from envoy_authz import grpc_service as _gs
+
+    _gs._vikunja = None
+    _gs._SESSIONS = None
