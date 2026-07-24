@@ -207,3 +207,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .idea/
+
+# OP signing key + any other private key material. The OP RSA key is generated
+# on first run at OP_KEY_PATH (default ./op_key.pem); committing it would
+# publish the key that signs id_tokens.
+op_key.pem
+*.pem

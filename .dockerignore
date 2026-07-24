@@ -23,6 +23,10 @@ docs/
 .idea/
 .vscode/
 
+# Key material — never bake a locally generated OP signing key into the image
+# (the Dockerfile does `COPY . /app`).
+*.pem
+
 # Repo infra
 .woodpecker.yaml
 .dockerignore
