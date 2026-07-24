@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import os
 from concurrent import futures
 
 import grpc
@@ -20,23 +19,19 @@ from .telemetry import (
 
 logger = logging.getLogger(__name__)
 
-GRPC_PORT = int(os.environ.get("GRPC_PORT", "5000"))
-HTTP_PORT = int(os.environ.get("HTTP_PORT", "5001"))
-TLS_CERT_PATH = os.environ.get("TLS_CERT_PATH", "/var/lib/tls/tls.crt")
-TLS_KEY_PATH = os.environ.get("TLS_KEY_PATH", "/var/lib/tls/tls.key")
-
 
 def build_grpc_server(config: Config) -> tuple[grpc.Server, health.HealthServicer]:
+    s = config.settings
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     health_servicer = register_services(server, config)
 
-    with open(TLS_KEY_PATH, "rb") as f:
+    with open(s.tls_key_path, "rb") as f:
         private_key = f.read()
-    with open(TLS_CERT_PATH, "rb") as f:
+    with open(s.tls_cert_path, "rb") as f:
         certificate_chain = f.read()
 
     credentials = grpc.ssl_server_credentials([(private_key, certificate_chain)])
-    server.add_secure_port(f"[::]:{GRPC_PORT}", credentials)
+    server.add_secure_port(f"[::]:{s.grpc_port}", credentials)
     return server, health_servicer
 
 
@@ -47,7 +42,7 @@ async def lifespan(app: FastAPI):
     try:
         server.start()
         health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
-        logger.info("Secure gRPC server started on port %s", GRPC_PORT)
+        logger.info("Secure gRPC server started on port %s", config.settings.grpc_port)
         app.state.config = config
         yield
     finally:
@@ -69,13 +64,15 @@ def main():
     if provider is not None:
         instrument_fastapi(app)
     app.state.tracer_provider = provider
-    logger.info("Starting HTTPS server on port %s", HTTP_PORT)
+    config = load_config()
+    s = config.settings
+    logger.info("Starting HTTPS server on port %s", s.http_port)
     uvicorn.run(
         app,
         host="::",
-        port=HTTP_PORT,
-        ssl_certfile=TLS_CERT_PATH,
-        ssl_keyfile=TLS_KEY_PATH,
+        port=s.http_port,
+        ssl_certfile=s.tls_cert_path,
+        ssl_keyfile=s.tls_key_path,
         log_config=None,
     )
 

@@ -296,14 +296,20 @@ _CRL = _build_crl(_TRUSTED_CA_KEY, _TRUSTED_CA, [_REVOKED_CLIENT_CERT.serial_num
 
 @pytest.fixture(scope="session")
 def ha_config() -> Config:
+    from envoy_authz.config import Settings
+
     store = build_store(
         _pem(_TRUSTED_CA),
         _CRL.public_bytes(serialization.Encoding.PEM).decode(),
     )
-    return Config(
-        frigate_proxy_secret=FRIGATE_TEST_SECRET,
-        ha_ca_store=store,
+    settings = Settings(
+        frigate_x_proxy_secret=FRIGATE_TEST_SECRET,
+        ha_ca_certificate=_pem(_TRUSTED_CA),
+        ha_crl=_CRL.public_bytes(serialization.Encoding.PEM).decode(),
+        idp_issuer="https://idp.test",
+        secret_key="test-secret-key",
     )
+    return Config(settings=settings, ha_ca_store=store)
 
 
 @pytest.fixture(scope="session")
