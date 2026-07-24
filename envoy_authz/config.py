@@ -43,6 +43,34 @@ class Settings(BaseSettings):
     tls_cert_path: str = "/var/lib/tls/tls.crt"
     tls_key_path: str = "/var/lib/tls/tls.key"
 
+    def federation(self) -> "FederationSettings | None":
+        """The federation config, or None when federation is not configured.
+
+        All three fields are required together: without `providers_file` there
+        is no backend to federate to, without `secret_key` we cannot sign auth
+        codes, and without `idp_issuer` the OP cannot advertise discovery.
+        Returning a narrowed object means callers do ONE None check instead of
+        three, and cannot half-enable federation.
+        """
+        if not (self.idp_issuer and self.secret_key and self.providers_file):
+            return None
+        return FederationSettings(
+            idp_issuer=self.idp_issuer,
+            secret_key=self.secret_key.get_secret_value(),
+            providers_file=self.providers_file,
+            code_ttl_seconds=self.code_ttl_seconds,
+        )
+
+
+@dataclass(frozen=True)
+class FederationSettings:
+    """The federation subset of `Settings`, with the optional fields resolved."""
+
+    idp_issuer: str
+    secret_key: str
+    providers_file: str
+    code_ttl_seconds: int
+
 
 @dataclass
 class Config:
