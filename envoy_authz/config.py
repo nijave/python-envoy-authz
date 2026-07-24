@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     secret_key: SecretStr | None = None
     providers_file: str | None = None
     code_ttl_seconds: int = 10
+    op_key_path: str = "op_key.pem"  # OP RSA signing key (load-or-create)
 
     # --- transport (moved from __main__ module constants) ---
     grpc_port: int = 5000
