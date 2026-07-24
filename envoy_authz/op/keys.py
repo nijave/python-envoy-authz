@@ -10,18 +10,24 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from joserfc.jwk import KeySet, RSAKey
 
-# Module-level globals wired by Task 5's init_op. Left as None here so the
-# Interfaces contract is satisfied and grants.py references resolve at import
-# time (they are only dereferenced at runtime, after init_op has assigned them).
-key_set: KeySet | None = None
-kid: str | None = None
+# Populated by init_op (Task 5) at startup. Grants/routes read these globals.
+key_set = None  # joserfc KeySet
+kid: str = ""
+
+
+def set_key(jwk):
+    """Bind the loaded/generated RSA key as the OP signing key."""
+    global key_set, kid
+    key_set = KeySet([jwk])
+    kid = jwk.kid
 
 
 def public_jwks_dict() -> dict:
-    """The public JWKS (no private material) for the discovery /.well-known endpoint."""
-    if key_set is None:
-        return {"keys": []}
-    return key_set.as_dict(private=False)
+    """The public JWKS (no private material) for the /.well-known JWKS endpoint."""
+    params = key_set.keys[0].as_dict()
+    entry = {k: params[k] for k in ("kty", "n", "e", "kid")}
+    entry.update({"alg": "RS256", "use": "sig"})
+    return {"keys": [entry]}
 
 
 def load_or_create_key(path: str) -> RSAKey:

@@ -443,3 +443,60 @@ def expired_crl_pem() -> str:
 @pytest.fixture(scope="session")
 def frigate_secret() -> str:
     return FRIGATE_TEST_SECRET
+
+
+OP_PROVIDERS_YAML = """
+providers:
+  vikunja:
+    hosts: ["vikunja.test"]
+    client_id: "vikunja"
+    client_secret: "vikunja-secret"
+    redirect_url: "http://localhost:3456/auth/openid/broker"
+    api_base: "http://localhost:3456"
+    provider_key: "broker"
+    scope: "openid profile email"
+"""
+
+
+OP_TEST_ISSUER = "https://idp.test"
+
+
+def _federation_settings(providers_file: str):
+    """The resolved federation config the OP/federator are wired from.
+
+    Built directly rather than via env vars: `store`/`op.runtime` are configured
+    explicitly at startup now, so tests do not need a full valid environment
+    just to exercise the OP.
+    """
+    from envoy_authz.config import FederationSettings
+
+    return FederationSettings(
+        idp_issuer=OP_TEST_ISSUER,
+        secret_key="test-secret-key",
+        providers_file=providers_file,
+        code_ttl_seconds=10,
+    )
+
+
+@pytest.fixture
+def op_client(tmp_path, monkeypatch):
+    """A FastAPI TestClient with the OP mounted, store seeded, keys generated."""
+    from fastapi.testclient import TestClient
+
+    # TestClient uses http://testserver, which authlib would reject as
+    # insecure transport; allow http for the in-process OP tests.
+    monkeypatch.setenv("AUTHLIB_INSECURE_TRANSPORT", "1")
+
+    from envoy_authz.federator import providers
+    from envoy_authz.federator.store import _reset, seed
+    from envoy_authz.http_app import create_app
+
+    p = tmp_path / "providers.yaml"
+    p.write_text(OP_PROVIDERS_YAML)
+    providers.load_providers(str(p))
+    _reset()
+    seed()
+
+    key_path = str(tmp_path / "op_key.pem")
+    app = create_app(op_key_path=key_path, federation=_federation_settings(str(p)))
+    return TestClient(app)
