@@ -2345,9 +2345,9 @@ def test_refresh_extracts_cookie_with_comma_bearing_expires(vikunja):
 
 
 @respx.mock
-def test_refresh_401_raises_downstream_error(vikunja):
+def test_refresh_401_raises_refresh_revoked(vikunja):
     # 401 means the session was revoked/expired; the ladder treats this as
-    # "fall through to federation", not a hard deny. The client surfaces it as a
+    # "fall through to federation", not a deny. The client surfaces it as a
     # distinct sentinel so the ladder can branch.
     respx.post("http://localhost:3456/api/v1/user/token/refresh").mock(
         return_value=httpx.Response(401)
@@ -2355,15 +2355,41 @@ def test_refresh_401_raises_downstream_error(vikunja):
     with pytest.raises(DownstreamError) as exc:
         vikunja.refresh("expired")
     assert exc.value.refresh_revoked
+    assert not exc.value.retryable
 
 
 @respx.mock
-def test_refresh_network_error_raises_downstream_error(vikunja):
+def test_refresh_5xx_raises_retryable(vikunja):
+    # 5xx → retryable → Check denies 503.
+    respx.post("http://localhost:3456/api/v1/user/token/refresh").mock(
+        return_value=httpx.Response(503)
+    )
+    with pytest.raises(DownstreamError) as exc:
+        vikunja.refresh("old-rt")
+    assert exc.value.retryable
+    assert not exc.value.refresh_revoked
+
+
+@respx.mock
+def test_refresh_4xx_terminal_raises_non_retryable(vikunja):
+    # A terminal 4xx (not 401) → non-retryable → Check denies 401.
+    respx.post("http://localhost:3456/api/v1/user/token/refresh").mock(
+        return_value=httpx.Response(403)
+    )
+    with pytest.raises(DownstreamError) as exc:
+        vikunja.refresh("old-rt")
+    assert not exc.value.retryable
+    assert not exc.value.refresh_revoked
+
+
+@respx.mock
+def test_refresh_network_error_raises_retryable(vikunja):
     respx.post("http://localhost:3456/api/v1/user/token/refresh").mock(
         side_effect=httpx.ConnectError("boom")
     )
-    with pytest.raises(DownstreamError):
+    with pytest.raises(DownstreamError) as exc:
         vikunja.refresh("old-rt")
+    assert exc.value.retryable
 
 
 @respx.mock
@@ -2390,12 +2416,23 @@ def test_federate_posts_code_and_redirect_url(vikunja):
 
 
 @respx.mock
-def test_federate_non_200_raises_downstream_error(vikunja):
+def test_federate_5xx_raises_retryable(vikunja):
     respx.post("http://localhost:3456/api/v1/auth/openid/broker/callback").mock(
         return_value=httpx.Response(500, text="boom")
     )
-    with pytest.raises(DownstreamError):
+    with pytest.raises(DownstreamError) as exc:
         vikunja.federate(_subject())
+    assert exc.value.retryable
+
+
+@respx.mock
+def test_federate_4xx_raises_terminal(vikunja):
+    respx.post("http://localhost:3456/api/v1/auth/openid/broker/callback").mock(
+        return_value=httpx.Response(403)
+    )
+    with pytest.raises(DownstreamError) as exc:
+        vikunja.federate(_subject())
+    assert not exc.value.retryable
 
 
 @respx.mock
@@ -2475,13 +2512,26 @@ _REFRESH_COOKIE_NAME = "vikunja_refresh_token"
 
 
 class DownstreamError(Exception):
-    """Vikunja returned an error or was unreachable. `refresh_revoked` marks
-    the 401-on-refresh case (session revoked/expired) so the ladder can fall
-    through to federation rather than hard-deny."""
+    """Vikunja returned an error or was unreachable.
 
-    def __init__(self, message: str, *, refresh_revoked: bool = False):
+    Flags drive the Check deny status:
+    - `refresh_revoked`: the 401-on-refresh case (session revoked/expired) —
+      the ladder falls through to federation rather than denying.
+    - `retryable`: Vikunja was unreachable or returned 5xx — Check denies with
+      HTTP 503 so clients can retry. Terminal failures (4xx other than the
+      refresh-401 fall-through) deny with HTTP 401.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        refresh_revoked: bool = False,
+        retryable: bool = False,
+    ):
         super().__init__(message)
         self.refresh_revoked = refresh_revoked
+        self.retryable = retryable
 
 
 class VikunjaSession(BaseModel):
@@ -2503,8 +2553,9 @@ class VikunjaClient:
     def refresh(self, refresh_cookie: str) -> VikunjaSession:
         """POST /api/v1/user/token/refresh with the Cookie header; return the
         rotated session. Raises DownstreamError(refresh_revoked=True) on 401
-        (so the ladder falls through to federation) and DownstreamError on any
-        other failure."""
+        (so the ladder falls through to federation). Raises
+        DownstreamError(retryable=True) on transport error / 5xx (Check denies
+        503). Raises DownstreamError on a terminal 4xx (Check denies 401)."""
         try:
             resp = self._client.post(
                 _REFRESH_PATH,
@@ -2512,13 +2563,16 @@ class VikunjaClient:
             )
         except httpx.HTTPError as exc:
             logger.warning("Vikunja refresh transport error")
-            raise DownstreamError("refresh transport error") from exc
+            raise DownstreamError("refresh transport error", retryable=True) from exc
         if resp.status_code == 401:
             logger.info("Vikunja refresh rejected (revoked/expired)")
             raise DownstreamError("refresh rejected", refresh_revoked=True)
         if resp.status_code != 200:
             logger.warning("Vikunja refresh failed (status=%d)", resp.status_code)
-            raise DownstreamError(f"refresh status {resp.status_code}")
+            raise DownstreamError(
+                f"refresh status {resp.status_code}",
+                retryable=resp.status_code >= 500,
+            )
         return self._session_from_response(resp)
 
     # --- federation ------------------------------------------------------
@@ -2546,12 +2600,15 @@ class VikunjaClient:
             )
         except httpx.HTTPError as exc:
             logger.warning("Vikunja openid callback transport error")
-            raise DownstreamError("callback transport error") from exc
+            raise DownstreamError("callback transport error", retryable=True) from exc
         if resp.status_code != 200:
             logger.warning(
                 "Vikunja openid callback failed (status=%d)", resp.status_code
             )
-            raise DownstreamError(f"callback status {resp.status_code}")
+            raise DownstreamError(
+                f"callback status {resp.status_code}",
+                retryable=resp.status_code >= 500,
+            )
         return self._session_from_response(resp, require_token=True)
 
     # --- shared response parsing ----------------------------------------
@@ -2815,17 +2872,34 @@ def test_get_bearer_no_cache_federates(cache):
     assert got.bearer == "fresh" and got.refresh_cookie == "fresh-rt"
 
 
-def test_get_bearer_refresh_network_error_raises(cache):
+def test_get_bearer_refresh_5xx_raises_retryable(cache):
     cache.put(_subject().sub, _cached(bearer="stale", refresh="old-rt", exp_delta=-1))
-    vk = _stub_vikunja(refresh_raises=DownstreamError("transport"))
-    with pytest.raises(DownstreamError):
+    vk = _stub_vikunja(refresh_raises=DownstreamError("transport", retryable=True))
+    with pytest.raises(DownstreamError) as exc:
         get_bearer(_subject(), None, vk, cache)
+    assert exc.value.retryable
 
 
-def test_get_bearer_federate_failure_raises(cache):
-    vk = _stub_vikunja(federate_raises=DownstreamError("callback 500"))
-    with pytest.raises(DownstreamError):
+def test_get_bearer_refresh_4xx_raises_terminal(cache):
+    cache.put(_subject().sub, _cached(bearer="stale", refresh="old-rt", exp_delta=-1))
+    vk = _stub_vikunja(refresh_raises=DownstreamError("forbidden"))
+    with pytest.raises(DownstreamError) as exc:
         get_bearer(_subject(), None, vk, cache)
+    assert not exc.value.retryable
+
+
+def test_get_bearer_federate_5xx_raises_retryable(cache):
+    vk = _stub_vikunja(federate_raises=DownstreamError("callback 500", retryable=True))
+    with pytest.raises(DownstreamError) as exc:
+        get_bearer(_subject(), None, vk, cache)
+    assert exc.value.retryable
+
+
+def test_get_bearer_federate_4xx_raises_terminal(cache):
+    vk = _stub_vikunja(federate_raises=DownstreamError("callback 403"))
+    with pytest.raises(DownstreamError) as exc:
+        get_bearer(_subject(), None, vk, cache)
+    assert not exc.value.retryable
 
 
 def test_get_bearer_concurrent_same_identity_single_federate(cache):
@@ -3001,7 +3075,9 @@ def get_bearer(
     cache: SessionCache,
 ) -> str | None:
     """Decision ladder. Returns str (inject upstream), None (allow client's
-    bearer through unchanged), or raises DownstreamError (deny)."""
+    bearer through unchanged), or raises DownstreamError (deny). The raised
+    DownstreamError's `retryable` flag tells Check which HTTP status to deny
+    with: retryable (Vikunja unreachable / 5xx) → 503; terminal (4xx) → 401."""
     key = subject.sub
     now = _now()
 
@@ -3106,68 +3182,55 @@ DownstreamError (deny). No per-request Vikunja call on the hot path."
 
 **Files:**
 - Modify: `envoy_authz/grpc_service.py`
-- Modify: `tests/unit/test_check.py` (or create if absent)
-- Modify: `tests/conftest.py` (gRPC test fixture wiring)
+- Create: `tests/unit/test_check.py` (in-process servicer federation tests — do NOT touch `tests/integration/test_check.py`, the real-TLS gRPC suite)
+- Modify: `tests/conftest.py` (extend the existing `check_request` fixture + add a `grpc_servicer` fixture)
 
-**Spec alignment:**
-- `Check` calls `get_bearer` after the mTLS allow gate. Return value contract:
-  `str` → inject `Authorization: Bearer <str>` via `headers_to_add`; `None` →
-  allow through unchanged (NO `Authorization` header added — spec line 421);
-  raised `DownstreamError` → `PERMISSION_DENIED` (deny-on-failure, spec lines
-  452–455).
-- The Frigate `X-Proxy-Secret` path stays orthogonal (spec line 214).
+**Spec alignment + repo grounding (important):**
+- The servicer class is **`AuthorizationService`** (in `envoy_authz/grpc_service.py`), constructed as `AuthorizationService(config: Config)`. It is registered via `register_services(server, config)`. The federation globals `_vikunja`/`_SESSIONS` are **module-level** in `grpc_service.py` (wired by `init_federator`), but the servicer still takes `Config` for `ha_ca_store` + `frigate_proxy_secret`. Do not rename the class or change its constructor signature.
+- `Check` calls `get_bearer` after the mTLS allow gate, **only on the non-Frigate path** (when `client_cert is not None` and `host != FRIGATE_HOST`). The Frigate `X-Proxy-Secret` path stays orthogonal (spec line 214).
+- Return contract: `str` → inject `Authorization: Bearer <str>` via `headers_to_add`; `None` → allow through unchanged (NO `Authorization` header — spec line 421); raised `DownstreamError` → deny.
+- **Deny status policy (user-directed):** map the raised `DownstreamError`'s `retryable` flag to the HTTP deny status:
+  - `retryable=True` (Vikunja unreachable / 5xx) → `denied_response.status.code = StatusCode.Unavailable` (503) — retryable by clients.
+  - `retryable=False` (terminal 4xx) → `denied_response.status.code = StatusCode.Unauthorized` (401).
+  - Both keep `status.code = PERMISSION_DENIED` and body `{"error": "Unauthorized"}` (consistent with the existing deny shape).
+  - **Note (leave in code as a comment):** the existing Frigate/mTLS deny path uses 403 Forbidden; consider aligning it with this 401/503 scheme in a future change. Do NOT change the Frigate path now.
 - Log the decision branch (spec lines 477–482); never log the bearer.
+- Reuse the existing session-scoped `check_request` fixture (extend it with optional `headers`/`bearer`/`refresh_cookie`) — do NOT define a conflicting local `_check_request` helper.
 
 **Interfaces:**
-- Produces (in `grpc_service.py`): module globals `_vikunja: VikunjaClient`,
-  `_SESSIONS: SessionCache`, wired by `init_federator(provider_name)` (called
-  from the lifespan).
-- Consumes: `federator/session.py` (`get_bearer`, `SessionCache`),
-  `federator/subject.py` (`derive_subject`), `federator/vikunja.py`
-  (`VikunjaClient`, `DownstreamError`), `identity.py` (`parse_client_identity`).
+- Produces (in `grpc_service.py`): module globals `_vikunja: VikunjaClient`, `_SESSIONS: SessionCache`, wired by `init_federator(provider_name)` (called from the lifespan); helpers `_deny(retryable: bool)` and `_ok_with_header(key, value)`.
+- Consumes: `federator/session.py` (`get_bearer`, `SessionCache`), `federator/subject.py` (`derive_subject`), `federator/vikunja.py` (`VikunjaClient`, `DownstreamError`), `identity.py` (`parse_client_identity`), `config.Config`.
 
-- [ ] **Step 1: Read the current `grpc_service.py` and its test**
+- [ ] **Step 1: Read the current `grpc_service.py` and the integration test**
 
-Run: `poetry run pytest tests/unit/test_check.py -v` (if it exists) for the
-baseline. Read `envoy_authz/grpc_service.py` and `tests/unit/test_check.py`
-fully before editing.
+Read `envoy_authz/grpc_service.py` and `tests/integration/test_check.py` fully
+before editing. Run `poetry run pytest tests/integration/test_check.py -v` for the
+baseline (these must stay green). Note: there is no `tests/unit/test_check.py`
+yet — you are creating it.
 
 - [ ] **Step 2: Write the failing federation tests**
 
-Add to `tests/unit/test_check.py` (append; keep existing mTLS-verify tests):
+Create `tests/unit/test_check.py`:
 
 ```python
-from urllib.parse import quote
+"""In-process federation tests for AuthorizationService.Check.
+
+These exercise the servicer directly (no real gRPC/TLS). The real-TLS gRPC
+suite lives in tests/integration/test_check.py and is untouched here.
+"""
+
+import time
 
 import httpx
+import pytest
 import respx
 
-from envoy_authz.federator.subject import Subject
-from envoy_authz.federator.vikunja import DownstreamError, VikunjaSession
+from envoy.type.v3 import http_status_pb2
+from google.rpc import code_pb2
 
 
-def _check_request(cert_pem, bearer=None, refresh_cookie=None):
-    from envoy_authz import grpc_service_pb2 as pb
-
-    headers = {}
-    if bearer:
-        headers["authorization"] = f"Bearer {bearer}"
-    if refresh_cookie:
-        headers["cookie"] = f"vikunja_refresh_token={refresh_cookie}"
-    ctx = pb.AttributeContext(
-        source=pb.AttributeContext.Source(certificate=quote(cert_pem)),
-        request=pb.AttributeContext.Request(
-            http=pb.AttributeContext.HttpRequest(headers=headers)
-        ),
-    )
-    return pb.CheckRequest(attributes=ctx)
-
-
-@respx.mock
 def test_check_injects_federated_bearer(grpc_servicer, trusted_email_cert_pem, monkeypatch):
-    # No incoming bearer, no cache → federate → inject.
-    import time
-
+    # No incoming bearer, no cache → federate → inject Authorization.
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     import jwt as pyjwt
 
@@ -3183,9 +3246,13 @@ def test_check_injects_federated_bearer(grpc_servicer, trusted_email_cert_pem, m
             json={"token": bearer},
         )
     )
-    req = _check_request(trusted_email_cert_pem)
-    resp = grpc_servicer.Check(req, None)
-    assert resp.HasField("ok_response")
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=trusted_email_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
     added = {h.header.key: h.header.value for h in resp.ok_response.headers_to_add}
     assert added["Authorization"] == f"Bearer {bearer}"
 
@@ -3196,33 +3263,96 @@ def test_check_allows_through_when_get_bearer_returns_none(
     # get_bearer returns None → OK with NO Authorization header (client's
     # incoming bearer was verified locally).
     from envoy_authz import grpc_service
-    from envoy_authz.federator.vikunja import DownstreamError
 
-    monkeypatch.setattr(
-        grpc_service, "get_bearer", lambda *a, **k: None
+    monkeypatch.setattr(grpc_service, "get_bearer", lambda *a, **k: None)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=trusted_email_cert_pem,
+        bearer="client-bearer",
     )
-    req = _check_request(trusted_email_cert_pem, bearer="client-bearer")
-    resp = grpc_servicer.Check(req, None)
-    assert resp.HasField("ok_response")
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
     added = {h.header.key: h.header.value for h in resp.ok_response.headers_to_add}
     assert "Authorization" not in added
 
 
-def test_check_denies_on_federation_failure(
+def test_check_denies_503_on_retryable_federation_failure(
     grpc_servicer, trusted_email_cert_pem, monkeypatch
 ):
+    # Vikunja 5xx → retryable → 503.
     from envoy_authz import grpc_service
     from envoy_authz.federator.vikunja import DownstreamError
 
     monkeypatch.setattr(
         grpc_service,
         "get_bearer",
-        lambda *a, **k: (_ for _ in ()).throw(DownstreamError("callback 500")),
+        lambda *a, **k: (_ for _ in ()).throw(
+            DownstreamError("callback 500", retryable=True)
+        ),
     )
-    req = _check_request(trusted_email_cert_pem)
-    resp = grpc_servicer.Check(req, None)
-    assert resp.HasField("denied_response")
-    assert resp.denied_response.status.code == 401  # PERMISSION_DENIED maps to 7; assert denied
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=trusted_email_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert (
+        resp.denied_response.status.code == http_status_pb2.StatusCode.Unavailable
+    )  # 503
+    assert resp.denied_response.body == '{"error": "Unauthorized"}'
+
+
+def test_check_denies_401_on_terminal_federation_failure(
+    grpc_servicer, trusted_email_cert_pem, monkeypatch
+):
+    # Vikunja 4xx → terminal → 401.
+    from envoy_authz import grpc_service
+    from envoy_authz.federator.vikunja import DownstreamError
+
+    monkeypatch.setattr(
+        grpc_service,
+        "get_bearer",
+        lambda *a, **k: (_ for _ in ()).throw(
+            DownstreamError("callback 403", retryable=False)
+        ),
+    )
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=trusted_email_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert (
+        resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
+    )  # 401
+
+
+def test_check_frigate_path_still_injects_x_proxy_secret(
+    grpc_servicer, trusted_client_cert_pem, frigate_secret, monkeypatch
+):
+    # Regression: the Frigate path must keep working unchanged (orthogonal to
+    # federation). get_bearer must NOT be called on the Frigate path.
+    from envoy_authz import grpc_service
+
+    called = {"n": 0}
+
+    def _boom(*a, **k):
+        called["n"] += 1
+        raise AssertionError("get_bearer must not run on the Frigate path")
+
+    monkeypatch.setattr(grpc_service, "get_bearer", _boom)
+    req = grpc_servicer.check_request(
+        host=grpc_service.FRIGATE_HOST, path="/api/other",
+        client_cert_pem=trusted_client_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
+    added = {h.header.key: h.header.value for h in resp.ok_response.headers_to_add}
+    assert added["X-Proxy-Secret"] == frigate_secret
+    assert called["n"] == 0
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
@@ -3230,39 +3360,100 @@ def test_check_denies_on_federation_failure(
 Run: `poetry run pytest tests/unit/test_check.py -v`
 Expected: FAIL — `grpc_servicer` fixture / federation wiring missing.
 
-- [ ] **Step 4: Add the `grpc_servicer` fixture to `tests/conftest.py`**
+- [ ] **Step 4: Extend `check_request` and add `grpc_servicer` to `tests/conftest.py`**
+
+Extend the existing session-scoped `check_request` fixture to accept optional
+`headers`, `bearer`, `refresh_cookie` (do not break the existing `host`/`path`/
+`client_cert_pem` callers in `tests/integration/test_check.py`):
+
+```python
+@pytest.fixture(scope="session")
+def check_request():
+    """Returns a builder for `CheckRequest` messages."""
+
+    def _build(
+        *,
+        host: str,
+        path: str,
+        client_cert_pem: str | None = None,
+        headers: dict | None = None,
+        bearer: str | None = None,
+        refresh_cookie: str | None = None,
+    ):
+        request = external_auth_pb2.CheckRequest()
+        request.attributes.request.http.host = host
+        request.attributes.request.http.path = path
+        if client_cert_pem is not None:
+            request.attributes.source.certificate = urllib.parse.quote(
+                client_cert_pem, safe=""
+            )
+        if headers:
+            for k, v in headers.items():
+                request.attributes.request.http.headers[k] = v
+        if bearer:
+            request.attributes.request.http.headers["authorization"] = f"Bearer {bearer}"
+        if refresh_cookie:
+            request.attributes.request.http.headers["cookie"] = (
+                f"vikunja_refresh_token={refresh_cookie}"
+            )
+        return request
+
+    return _build
+```
+
+Add the `grpc_servicer` fixture (a small namespace bundling the in-process
+servicer + the `check_request` builder):
 
 ```python
 @pytest.fixture
-def grpc_servicer(monkeypatch, tmp_path):
-    monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", FRIGATE_TEST_SECRET)
-    monkeypatch.setenv("HA_CA_CERTIFICATE", _pem(_TRUSTED_CA))
+def grpc_servicer(ha_config, monkeypatch, tmp_path):
+    """In-process AuthorizationService with the federator wired, plus the
+    check_request builder. Does not start a real gRPC server."""
     monkeypatch.setenv("IDP_ISSUER", "https://idp.test")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
 
     from envoy_authz.federator import providers
     from envoy_authz.federator.store import _reset, seed
-    from envoy_authz.grpc_service import AuthZServicer, init_federator
+    from envoy_authz.grpc_service import AuthorizationService, init_federator
 
     p = tmp_path / "providers.yaml"
     p.write_text(OP_PROVIDERS_YAML)
     providers.load_providers(str(p))
     _reset()
     seed()
-    init_federator("vikunja")  # wires _vikunja + _SESSIONS globals
-    return AuthZServicer()
+    init_federator("vikunja")  # wires _vikunja + _SESSIONS module globals
+
+    servicer = AuthorizationService(ha_config)  # real Config (ha_ca_store + secret)
+
+    class _NS:
+        servicer = servicer
+        check_request = check_request  # the session-scoped builder
+
+    return _NS()
 ```
 
-Also add a `trusted_email_cert_pem` fixture (a signed cert with an rfc822Name
-SAN) — alias Task 3's `email_cert` fixture if present.
+`OP_PROVIDERS_YAML` is the same constant added in Task 5's `op_client` fixture —
+hoist it to module scope in conftest so both fixtures share it. `ha_config`
+and `check_request` are the existing session-scoped fixtures; `trusted_email_cert_pem`
+is provided by Task 3.
 
 - [ ] **Step 5: Modify `envoy_authz/grpc_service.py`**
 
-Add the federator wiring + ladder call. Sketch of the relevant changes:
+Add the federator wiring + ladder call. Sketch of the relevant changes (the
+existing `Check` body up through the `allowed` decision is preserved; only the
+`allowed`-branch gains federation on the non-Frigate path):
 
 ```python
 import logging
+import urllib.parse
 
+import grpc
+from envoy.config.core.v3.base_pb2 import HeaderValue, HeaderValueOption
+from envoy.service.auth.v3 import external_auth_pb2
+from envoy.type.v3 import http_status_pb2
+from google.rpc import code_pb2, status_pb2
+
+from .config import Config, verify_client_cert
 from .federator.providers import get_provider
 from .federator.session import SessionCache, get_bearer
 from .federator.subject import derive_subject
@@ -3270,6 +3461,8 @@ from .federator.vikunja import DownstreamError, VikunjaClient
 from .identity import parse_client_identity
 
 logger = logging.getLogger(__name__)
+
+FRIGATE_HOST = "frigate.apps.somemissing.info"
 
 # Wired by init_federator (called from __main__ lifespan).
 _vikunja: VikunjaClient | None = None
@@ -3292,28 +3485,74 @@ def _extract_bearer(headers: dict) -> str | None:
     return None
 
 
-class AuthZServicer(AuthZServicerBase):  # keep existing base
+def _deny(retryable: bool):
+    # 503 for retryable (Vikunja unreachable/5xx); 401 for terminal (4xx).
+    # NOTE: the Frigate/mTLS deny path below still uses 403 Forbidden; consider
+    # aligning it with this 401/503 scheme in a future change.
+    code = (
+        http_status_pb2.StatusCode.Unavailable
+        if retryable
+        else http_status_pb2.StatusCode.Unauthorized
+    )
+    return external_auth_pb2.CheckResponse(
+        status=status_pb2.Status(code=code_pb2.PERMISSION_DENIED),
+        denied_response=external_auth_pb2.DeniedHttpResponse(
+            status=http_status_pb2.HttpStatus(code=code),
+            body='{"error": "Unauthorized"}',
+        ),
+    )
+
+
+class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
+    def __init__(self, config: Config):
+        self._config = config
+
     def Check(self, request, context):
-        # ... existing mTLS verify + identity parse ...
-        # Frigate path (existing X-Proxy-Secret injection) stays orthogonal;
-        # federation runs only on the Vikunja path.
-        subject = derive_subject(cert)
-        http = request.attributes.request.http
-        bearer = _extract_bearer(dict(http.headers))
-        try:
-            upstream = get_bearer(subject, bearer, _vikunja, _SESSIONS)
-        except DownstreamError:
-            logger.warning("denied-federation-failure sub=%s", subject.sub)
-            return _deny_unauthorized()
-        if upstream is None:
-            # Client's own bearer verified locally → allow through unchanged.
-            logger.info("allowed-through-client-bearer sub=%s", subject.sub)
-            return _ok()  # no Authorization header added
-        logger.info("injected-bearer sub=%s", subject.sub)
-        return _ok_with_header("Authorization", f"Bearer {upstream}")
+        # ... existing mTLS verify + `allowed` decision, unchanged ...
+        if allowed:
+            return_headers: list[HeaderValueOption] = []
+            host = request.attributes.request.http.host
+
+            if host == FRIGATE_HOST:
+                # Frigate path: inject X-Proxy-Secret; NO federation (orthogonal).
+                return_headers.append(
+                    HeaderValueOption(
+                        header=HeaderValue(
+                            key="X-Proxy-Secret",
+                            value=self._config.frigate_proxy_secret,
+                        ),
+                    )
+                )
+            else:
+                # Non-Frigate path with a valid client cert: federate.
+                subject = derive_subject(client_cert)
+                bearer = _extract_bearer(dict(request.attributes.request.http.headers))
+                try:
+                    upstream = get_bearer(subject, bearer, _vikunja, _SESSIONS)
+                except DownstreamError as exc:
+                    logger.warning("denied-federation-failure sub=%s", subject.sub)
+                    return _deny(exc.retryable)
+                if upstream is not None:
+                    return_headers.append(
+                        HeaderValueOption(
+                            header=HeaderValue(
+                                key="Authorization", value=f"Bearer {upstream}"
+                            ),
+                        )
+                    )
+                    logger.info("injected-bearer sub=%s", subject.sub)
+                else:
+                    logger.info("allowed-through-client-bearer sub=%s", subject.sub)
+
+            # ... existing identity-logging + return OkHttpResponse(headers=return_headers) ...
+        else:
+            # existing deny path (403 Forbidden) — unchanged
+            ...
 ```
 
-`_ok_with_header` appends a `HeaderValueOption` to `OkHttpResponse.headers_to_add`. `_deny_unauthorized` returns a `DeniedHttpResponse` with `PERMISSION_DENIED`. Keep the existing Frigate branch exactly as-is; only the Vikunja path calls the ladder.
+Keep the existing Frigate metrics no-cert allow branch and the identity-logging
+block exactly as-is. Federation runs only in the `allowed` branch when
+`host != FRIGATE_HOST`.
 
 - [ ] **Step 6: Lint**
 
@@ -3321,8 +3560,8 @@ Run: `poetry run ruff check --fix envoy_authz tests && poetry run ruff format en
 
 - [ ] **Step 7: Run the check tests**
 
-Run: `poetry run pytest tests/unit/test_check.py -v`
-Expected: PASS — existing mTLS tests + new federation tests.
+Run: `poetry run pytest tests/unit/test_check.py tests/integration/test_check.py -v`
+Expected: PASS — new federation unit tests + existing real-TLS integration tests.
 
 - [ ] **Step 8: Run the full suite**
 
@@ -3335,43 +3574,47 @@ Expected: PASS.
 git add envoy_authz/grpc_service.py tests/unit/test_check.py tests/conftest.py
 git commit -m "feat: federate on gRPC Check, inject upstream bearer via headers_to_add
 
-After mTLS identity extraction, derive the subject, extract the incoming
-bearer, run get_bearer. str → inject Authorization: Bearer via headers_to_add;
-None → allow through unchanged (no header); DownstreamError → deny (401).
-Frigate X-Proxy-Secret path kept orthogonal. init_federator wires the
-VikunjaClient + SessionCache globals at startup."
+After mTLS identity extraction on the non-Frigate path, derive the subject,
+extract the incoming bearer, run get_bearer. str → inject Authorization: Bearer
+via headers_to_add; None → allow through unchanged (no header); DownstreamError
+→ deny: 503 for retryable (Vikunja unreachable/5xx), 401 for terminal (4xx).
+Frigate X-Proxy-Secret path kept orthogonal (get_bearer not called there).
+init_federator wires the VikunjaClient + SessionCache module globals at startup."
 ```
 
 ## Task 9: `__main__` lifespan wiring
 
 **Files:**
 - Modify: `envoy_authz/__main__.py`
-- Create: `tests/unit/test_main.py`
+- Modify: `tests/unit/test_main.py` (it already exists, testing the current `lifespan`/`load_config`/`build_grpc_server`; this task REPLACES its contents with `build_lifespan`-based tests)
+
+**Spec alignment + repo grounding (important):**
+- The existing `lifespan` builds and starts the gRPC server (`build_grpc_server` → `server.start` → health SERVING → on exit `server.stop(grace=10)`), and stashes `app.state.config = config`. The new `build_lifespan()` MUST preserve all of that; it ADDS: load providers, seed the OP store, `init_federator("vikunja")`, and tear down the httpx client + cache on shutdown. Do NOT drop the gRPC server start/stop — that would be a regression.
+- The existing `test_main.py` monkeypatches `main_module.load_config` and `main_module.build_grpc_server`. Keep those patchable names working (the new lifespan still calls `load_config()` and `build_grpc_server(config)`), so the replacement tests can keep mocking them to avoid binding real TLS ports.
+- `op_key_path` is the only new `Settings` field this task adds (Task 1 added the rest).
 
 **Interfaces:**
-- Modifies: the `lifespan` to call `federator.providers.load_providers`, `federator.store.seed`, `op.init_op(app, key_path)`, and `grpc_service.init_federator("vikunja")` at startup; tear down the httpx client + cache on shutdown.
+- Modifies: the lifespan (`build_lifespan()` factory) to ADD federator/OP-store wiring around the existing gRPC server lifecycle; tear down the httpx client + cache on shutdown.
 - Consumes: `config.Settings` (this task adds `op_key_path`; `providers_file`, `idp_issuer`, `secret_key` already from Task 1), all of the above.
 
 - [ ] **Step 1: Read the current `__main__.py` and confirm env-var names**
 
-Read `envoy_authz/__main__.py`. Preserve `GRPC_PORT`, `HTTP_PORT`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `FRIGATE_X_PROXY_SECRET`, `HA_CA_CERTIFICATE`, `HA_CRL` env-var names (k8s manifest depends on them). Add `PROVIDERS_FILE` (default `providers.yaml`), `OP_KEY_PATH` (default `op_key.pem`), `IDP_ISSUER`, `SECRET_KEY` to `Settings`.
+Read `envoy_authz/__main__.py`. Preserve `GRPC_PORT`, `HTTP_PORT`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `FRIGATE_X_PROXY_SECRET`, `HA_CA_CERTIFICATE`, `HA_CRL` env-var names (k8s manifest depends on them). Add `OP_KEY_PATH` (default `op_key.pem`) to `Settings` (`PROVIDERS_FILE`, `IDP_ISSUER`, `SECRET_KEY` already from Task 1).
 
 - [ ] **Step 2: Write the failing test**
 
-Create `tests/unit/test_main.py`:
+Replace `tests/unit/test_main.py` with:
 
 ```python
-import pytest
+import asyncio
+from unittest.mock import MagicMock
+
+from grpc_health.v1 import health_pb2
+
+from envoy_authz import __main__ as main_module
 
 
-def test_lifespan_loads_providers_and_mounts_op(monkeypatch, tmp_path):
-    monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", "x")
-    monkeypatch.setenv("HA_CA_CERTIFICATE", "")
-    monkeypatch.setenv("IDP_ISSUER", "https://idp.test")
-    monkeypatch.setenv("SECRET_KEY", "test-secret-key")
-    monkeypatch.setenv("PROVIDERS_FILE", str(tmp_path / "providers.yaml"))
-    monkeypatch.setenv("OP_KEY_PATH", str(tmp_path / "op_key.pem"))
-
+def _write_providers(tmp_path):
     (tmp_path / "providers.yaml").write_text(
         "providers:\n  vikunja:\n    client_id: 'v'\n    client_secret: 's'\n"
         "    redirect_url: 'http://localhost:3456/auth/openid/broker'\n"
@@ -3379,89 +3622,140 @@ def test_lifespan_loads_providers_and_mounts_op(monkeypatch, tmp_path):
         "    scope: 'openid profile email'\n"
     )
 
-    from envoy_authz.__main__ import build_lifespan
 
-    lifespan = build_lifespan()
-    from envoy_authz.http_app import create_app
+def test_lifespan_starts_and_drains_grpc_server(monkeypatch):
+    """The gRPC server lifecycle is preserved: start + SERVING on enter,
+    NOT_SERVING + stop(grace=10) on exit."""
+    fake_config = object()
+    fake_server = MagicMock()
+    fake_health = MagicMock()
 
-    app = create_app(lifespan=lifespan, op_key_path=str(tmp_path / "op_key.pem"))
-    from fastapi.testclient import TestClient
+    monkeypatch.setattr(main_module, "load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        main_module, "build_grpc_server", lambda config: (fake_server, fake_health)
+    )
 
-    with TestClient(app) as client:
-        # OP mounted.
-        disc = client.get("/.well-known/openid-configuration")
-        assert disc.status_code == 200
-        assert disc.json()["issuer"] == "https://idp.test"
-        # Federator wired.
-        from envoy_authz.grpc_service import _vikunja, _SESSIONS
+    app = MagicMock()
 
-        assert _vikunja is not None and _SESSIONS is not None
+    async def run():
+        async with main_module.build_lifespan()(app):
+            fake_server.start.assert_called_once()
+            fake_health.set.assert_called_once_with(
+                "", health_pb2.HealthCheckResponse.SERVING
+            )
+            fake_health.set.reset_mock()
+
+    asyncio.run(run())
+
+    fake_health.set.assert_called_once_with(
+        "", health_pb2.HealthCheckResponse.NOT_SERVING
+    )
+    fake_server.stop.assert_called_once_with(grace=10)
 
 
-def test_lifespan_cleans_up_on_shutdown(monkeypatch, tmp_path):
+def test_lifespan_loads_providers_and_wires_federator(monkeypatch, tmp_path):
+    """build_lifespan also loads providers, seeds the OP store, and wires the
+    federator module globals."""
     monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", "x")
     monkeypatch.setenv("HA_CA_CERTIFICATE", "")
     monkeypatch.setenv("IDP_ISSUER", "https://idp.test")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("PROVIDERS_FILE", str(tmp_path / "providers.yaml"))
     monkeypatch.setenv("OP_KEY_PATH", str(tmp_path / "op_key.pem"))
-    (tmp_path / "providers.yaml").write_text(
-        "providers:\n  vikunja:\n    client_id: 'v'\n    client_secret: 's'\n"
-        "    redirect_url: 'http://localhost:3456/auth/openid/broker'\n"
-        "    api_base: 'http://localhost:3456'\n    provider_key: 'broker'\n"
-        "    scope: 'openid profile email'\n"
+    _write_providers(tmp_path)
+
+    # Avoid binding a real gRPC port.
+    fake_server = MagicMock()
+    fake_health = MagicMock()
+    monkeypatch.setattr(
+        main_module, "build_grpc_server", lambda config: (fake_server, fake_health)
     )
 
-    from envoy_authz.__main__ import build_lifespan
-    from envoy_authz.http_app import create_app
-    from fastapi.testclient import TestClient
+    app = MagicMock()
 
-    app = create_app(lifespan=build_lifespan(), op_key_path=str(tmp_path / "op_key.pem"))
-    with TestClient(app):
-        pass
-    # After shutdown, the httpx client should be closed (best-effort check:
-    # the global is reset to None).
-    from envoy_authz.grpc_service import _vikunja
+    async def run():
+        async with main_module.build_lifespan()(app):
+            from envoy_authz.grpc_service import _vikunja, _SESSIONS
 
-    # _vikunja may persist; the cache + httpx client are closed. We assert no
-    # exception on shutdown (the real contract).
+            assert _vikunja is not None and _SESSIONS is not None
+            fake_server.start.assert_called_once()
+
+    asyncio.run(run())
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `poetry run pytest tests/unit/test_main.py -v`
-Expected: FAIL — `build_lifespan` not found.
+Expected: FAIL — `build_lifespan` not found (the existing tests reference `main_module.lifespan`).
 
 - [ ] **Step 4: Modify `envoy_authz/__main__.py`**
 
-Refactor the lifespan into a `build_lifespan()` factory (so tests can construct it). Sketch:
+Refactor the lifespan into a `build_lifespan()` factory (so tests can construct it). It preserves the existing gRPC server lifecycle and ADDS the federator/OP-store wiring:
 
 ```python
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from concurrent import futures
 
-from .config import Settings
+import grpc
+from fastapi import FastAPI
+from grpc_health.v1 import health, health_pb2
+
+from .config import Config, load_config
+from .grpc_service import register_services
+from .http_app import create_app
 
 logger = logging.getLogger(__name__)
 
 
+def build_grpc_server(config: Config) -> tuple[grpc.Server, health.HealthServicer]:
+    # ... unchanged: build server, register_services, TLS, add_secure_port ...
+    ...
+
+
 @asynccontextmanager
-async def build_lifespan():
-    settings = Settings()
-    # 1. Load providers.
+async def lifespan(app: FastAPI):
+    async for state in _run_lifespan(app):
+        yield state
+
+
+def build_lifespan():
+    """Factory so tests can construct the lifespan with patched deps."""
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        async for state in _run_lifespan(app):
+            yield state
+    return _lifespan
+
+
+@asynccontextmanager
+async def _run_lifespan(app: FastAPI):
+    config = load_config()
+    settings = config.settings  # Settings built inside load_config (Task 1)
+    # 1. Load providers + seed the OP store.
     from .federator import providers
+    from .federator.store import _reset, seed
     providers.load_providers(settings.providers_file)
-    # 2. Seed the OP store.
-    from .federator.store import seed, _reset
     _reset()
     seed()
-    # 3. Wire the federator (Vikunja client + session cache).
+    # 2. Wire the federator (Vikunja client + session cache module globals).
     from .grpc_service import init_federator
     init_federator("vikunja")
-    # 4. The OP router is mounted by create_app(op_key_path=...) via init_op.
+    # 3. gRPC server lifecycle (preserved from the existing lifespan).
+    server, health_servicer = build_grpc_server(config)
     try:
+        server.start()
+        health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+        logger.info("Secure gRPC server started on port %s", settings.grpc_port)
+        app.state.config = config
         yield
     finally:
+        logger.info("Draining gRPC server...")
+        health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
+        stopped = server.stop(grace=10)
+        await asyncio.to_thread(stopped.wait)
+        # Tear down the federator's httpx client + cache.
         from .grpc_service import _vikunja, _SESSIONS
         if _vikunja is not None:
             _vikunja._client.close()
@@ -3469,7 +3763,7 @@ async def build_lifespan():
             _SESSIONS.clear()
 ```
 
-In `main()`, pass `lifespan=build_lifespan()` and `op_key_path=settings.op_key_path` to `create_app`. Keep the existing gRPC server build + TLS + signal handling unchanged.
+Note: Task 1's `load_config()` builds `Config(settings=Settings(...), ha_ca_store=...)`, so `config.settings` is available here. If Task 1 instead kept `Config` without a `.settings` attribute, read the needed values directly from `Settings()` here instead — keep it consistent with Task 1's `Config` shape. In `main()`, pass `lifespan=lifespan` (or `build_lifespan()`) and `op_key_path=Settings().op_key_path` to `create_app`. Keep TLS + signal handling unchanged.
 
 - [ ] **Step 5: Add the new Settings fields to `config.py`**
 
