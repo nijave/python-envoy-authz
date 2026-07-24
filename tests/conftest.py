@@ -85,6 +85,7 @@ def _build_signed_cert(
     issuer_cert: x509.Certificate,
     *,
     eku: list[x509.ObjectIdentifier] | None = None,
+    san_emails: list[str] | None = None,
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     """Leaf client cert signed by the given CA. Mirrors the extension
     set used by real Home Assistant-issued client certs: BasicConstraints
@@ -97,7 +98,7 @@ def _build_signed_cert(
     public_key = key.public_key()
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (
+    builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer_cert.subject)
@@ -134,12 +135,14 @@ def _build_signed_cert(
             ),
             critical=False,
         )
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(common_name)]),
-            critical=False,
-        )
-        .sign(private_key=issuer_key, algorithm=hashes.SHA256())
     )
+    san_names: list[x509.GeneralName] = [x509.DNSName(common_name)]
+    if san_emails:
+        san_names.extend(x509.RFC822Name(e) for e in san_emails)
+    cert = builder.add_extension(
+        x509.SubjectAlternativeName(san_names),
+        critical=False,
+    ).sign(private_key=issuer_key, algorithm=hashes.SHA256())
     return key, cert
 
 
@@ -258,6 +261,20 @@ _, _WRONG_EKU_CLIENT_CERT = _build_signed_cert(
 )
 _, _REVOKED_CLIENT_CERT = _build_signed_cert(
     "revoked-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
+)
+_EMAIL_CLIENT_KEY, _EMAIL_CLIENT_CERT = _build_signed_cert(
+    "email-client.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    san_emails=["user@example.com"],
+)
+# A SAN rfc822Name that is NOT already normalized, to pin that the email
+# travelling downstream is lowercased the same way the identity log line is.
+_, _MIXED_CASE_EMAIL_CERT = _build_signed_cert(
+    "mixed-case.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    san_emails=["Alice@Example.COM"],
 )
 
 
@@ -390,6 +407,16 @@ def wrong_eku_client_cert_pem() -> str:
 @pytest.fixture(scope="session")
 def revoked_client_cert_pem() -> str:
     return _pem(_REVOKED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def email_client_cert_pem() -> str:
+    return _pem(_EMAIL_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def mixed_case_email_cert_pem() -> str:
+    return _pem(_MIXED_CASE_EMAIL_CERT)
 
 
 @pytest.fixture(scope="session")
