@@ -7,7 +7,13 @@ from envoy_authz import __main__ as main_module
 
 
 def test_lifespan_starts_and_drains_grpc_server(monkeypatch):
-    fake_config = object()
+    class _Settings:
+        grpc_port = 5000
+
+    class _Config:
+        settings = _Settings()
+
+    fake_config = _Config()
     fake_server = MagicMock()
     fake_health = MagicMock()
 

@@ -2,7 +2,7 @@
 
 from OpenSSL import crypto
 
-from envoy_authz.config import configure_crl, load_config
+from envoy_authz.config import configure_crl
 
 
 def test_expired_crl_not_loaded(expired_crl_pem, ca_cert_pem):
@@ -14,21 +14,31 @@ def test_expired_crl_not_loaded(expired_crl_pem, ca_cert_pem):
 
 
 def test_load_config_reads_env(ca_cert_pem, crl_pem, frigate_secret, monkeypatch):
+    from envoy_authz.config import load_config
+
     monkeypatch.setenv("HA_CA_CERTIFICATE", ca_cert_pem)
     monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", frigate_secret)
     monkeypatch.setenv("HA_CRL", crl_pem)
+    monkeypatch.setenv("IDP_ISSUER", "https://idp.test")
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key")
 
     config = load_config()
 
     assert config.frigate_proxy_secret == frigate_secret
     assert config.ha_ca_store is not None
+    assert config.settings.ha_crl == crl_pem
 
 
 def test_load_config_without_crl(ca_cert_pem, frigate_secret, monkeypatch):
+    from envoy_authz.config import load_config
+
     monkeypatch.setenv("HA_CA_CERTIFICATE", ca_cert_pem)
     monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", frigate_secret)
     monkeypatch.delenv("HA_CRL", raising=False)
+    monkeypatch.setenv("IDP_ISSUER", "https://idp.test")
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key")
 
     config = load_config()
 
     assert config.frigate_proxy_secret == frigate_secret
+    assert config.settings.ha_crl is None

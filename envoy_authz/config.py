@@ -1,21 +1,64 @@
 import datetime
 import logging
-import os
 from dataclasses import dataclass
 
 from cryptography import x509
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from OpenSSL import crypto
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    """Validated, env-driven configuration.
+
+    Env-var names are derived from field names (FRIGATE_X_PROXY_SECRET, etc.)
+    so the existing k8s manifest keeps working. Secrets are SecretStr so they
+    never leak in repr/logs.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+
+    # --- existing (preserved) ---
+    frigate_x_proxy_secret: SecretStr
+    ha_ca_certificate: str  # PEM
+    ha_crl: str | None = None  # PEM
+
+    # --- OP / federator (opt-in) ---
+    # Federation is OFF unless all three of idp_issuer, secret_key and
+    # providers_file are supplied. This keeps the pre-federation deployment
+    # (the k8s manifest, which sets only the two vars above) starting and
+    # behaving exactly as it did: mTLS allow gate + Frigate proxy secret, no OP
+    # mounted and no federator wired. See `Settings.federation`.
+    idp_issuer: str | None = None
+    secret_key: SecretStr | None = None
+    providers_file: str | None = None
+    code_ttl_seconds: int = 10
+
+    # --- transport (moved from __main__ module constants) ---
+    grpc_port: int = 5000
+    http_port: int = 5001
+    tls_cert_path: str = "/var/lib/tls/tls.crt"
+    tls_key_path: str = "/var/lib/tls/tls.key"
+
+
 @dataclass
 class Config:
-    frigate_proxy_secret: str
-    # Shared across the gRPC thread pool; must not be mutated after the
-    # server starts (concurrent reads during cert verification are safe).
+    """Runtime container: validated settings plus constructed state.
+
+    `ha_ca_store` is built from `settings` at startup (runtime state, not
+    config). `frigate_proxy_secret` is exposed as a plain str for the existing
+    gRPC servicer, which reads it off `Config` directly.
+    """
+
+    settings: Settings
     ha_ca_store: crypto.X509Store
+
+    @property
+    def frigate_proxy_secret(self) -> str:
+        return self.settings.frigate_x_proxy_secret.get_secret_value()
 
 
 def configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
@@ -39,21 +82,18 @@ def build_store(ca_cert_pem: str, crl_pem: str | None = None) -> crypto.X509Stor
 
 
 def load_config() -> Config:
+    settings = Settings()
     return Config(
-        frigate_proxy_secret=os.environ["FRIGATE_X_PROXY_SECRET"],
-        ha_ca_store=build_store(
-            os.environ["HA_CA_CERTIFICATE"],
-            os.environ.get("HA_CRL"),
-        ),
+        settings=settings,
+        ha_ca_store=build_store(settings.ha_ca_certificate, settings.ha_crl),
     )
 
 
 def verify_client_cert(
     cert_pem: str, store: crypto.X509Store
 ) -> x509.Certificate | None:
-    """
-    Verify a client certificate against the CA + CRL and require the clientAuth
-    EKU. Returns the verified certificate, or None on any failure.
+    """Verify a client certificate against the CA + CRL and require the
+    clientAuth EKU. Returns the verified certificate, or None on any failure.
     """
     try:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem.encode())
