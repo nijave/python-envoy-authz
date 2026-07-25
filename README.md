@@ -25,6 +25,8 @@ poetry install
 # Federation is OPT-IN: also set IDP_ISSUER, SECRET_KEY and PROVIDERS_FILE to
 # enable it (with any of them unset the service runs the mTLS + Frigate gate
 # only). See docs/federation.md for the full list, incl. OP_KEY_PATH.
+# Also required: TLS cert+key at TLS_CERT_PATH/TLS_KEY_PATH (the gRPC + OP HTTPS
+# servers will not start without them; defaults /var/lib/tls/tls.{crt,key}).
 poetry run python -m envoy_authz
 ```
 
