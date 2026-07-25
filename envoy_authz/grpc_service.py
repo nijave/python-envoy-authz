@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 FRIGATE_HOST = "frigate.apps.somemissing.info"
 
+# Headers never emitted to logs (they may carry a bearer / refresh cookie).
+_SENSITIVE_HEADERS = frozenset(("authorization", "proxy-authorization", "cookie"))
+
 # Federation is OPT-IN (see config.Settings.federation): when it is not
 # configured the lifespan never calls init_federator, these stay None, and Check
 # behaves exactly as it did before federation existed — mTLS allow gate plus the
@@ -116,7 +119,17 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 "principal": request.attributes.source.principal,
             },
         )
-        logger.debug("Headers: %s", headers)
+        # Guarded: the redaction comprehension is an argument expression, so
+        # without this check it runs on every request to build a string that
+        # INFO-level logging then discards.
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Headers: %s",
+                {
+                    k: "***" if k.lower() in _SENSITIVE_HEADERS else v
+                    for k, v in headers.items()
+                },
+            )
 
         # Verify the client cert once (if provided) and reuse the result.
         raw_certificate = request.attributes.source.certificate

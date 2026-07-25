@@ -187,3 +187,28 @@ def test_init_federator_names_the_missing_provider(tmp_path):
         init_federator("vikunja")
     assert "vikunja" in str(exc.value)
     assert "vikunja-prod" in str(exc.value)
+
+
+def test_check_never_logs_bearer_or_cookie(
+    grpc_servicer, email_client_cert_pem, caplog, monkeypatch
+):
+    # The DEBUG "Headers: …" line must redact Authorization/Cookie so the
+    # incoming bearer + refresh cookie never reach the logs.
+    import logging
+
+    from envoy_authz import grpc_service
+
+    monkeypatch.setattr(grpc_service, "get_bearer", lambda *a, **k: None)
+    caplog.set_level(logging.DEBUG)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=email_client_cert_pem,
+        bearer="s3cret-bearer-value",
+        refresh_cookie="s3cret-refresh-cookie",
+    )
+    grpc_servicer.servicer.Check(req, None)
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert "s3cret-bearer-value" not in msg
+        assert "s3cret-refresh-cookie" not in msg
