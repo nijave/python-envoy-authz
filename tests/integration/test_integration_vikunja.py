@@ -3,12 +3,15 @@
 Skipped unless ``RUN_INTEGRATION=1``. Bring up the stack with::
 
     docker compose -f docker-compose.vikunja.yml up -d --build
-    RUN_INTEGRATION=1 TLS_CA=<server-ca.pem> TLS_CLIENT_KEY=<client.key> \\
+    RUN_INTEGRATION=1 \\
+        TLS_CA=<server-ca.pem> \\
+        TLS_CLIENT_CERT=<client.crt> TLS_CLIENT_KEY=<client.key> \\
         poetry run pytest tests/integration/test_integration_vikunja.py -v
 
-The mTLS client cert (``trusted_email_cert_pem``) is signed by the test PKI CA,
-so the federator's ``HA_CA_CERTIFICATE`` must trust that same CA for the request
-to pass the mTLS gate and reach the federation ladder.
+The mTLS material is operator-supplied (not the in-process test PKI, whose key
+is never exposed and whose CA is random per session). The client cert must be
+signed by the CA the federator trusts (``HA_CA_CERTIFICATE`` in the compose) and
+the server cert's CA is ``TLS_CA``.
 """
 
 import os
@@ -26,32 +29,33 @@ pytestmark = [
 ]
 
 
-def test_check_federates_to_vikunja(trusted_email_cert_pem):
+def test_check_federates_to_vikunja():
     from envoy.service.auth.v3 import external_auth_pb2, external_auth_pb2_grpc
 
     tls_ca = os.environ.get("TLS_CA")
+    client_cert = os.environ.get("TLS_CLIENT_CERT")
     client_key = os.environ.get("TLS_CLIENT_KEY")
-    if not tls_ca or not client_key:
+    if not (tls_ca and client_cert and client_key):
         pytest.fail(
-            "RUN_INTEGRATION=1 set but TLS_CA / TLS_CLIENT_KEY not provided "
-            "(server CA PEM and mTLS client key PEM)"
+            "RUN_INTEGRATION=1 set but TLS_CA / TLS_CLIENT_CERT / TLS_CLIENT_KEY "
+            "not all provided (server CA PEM, mTLS client cert PEM, client key PEM)"
         )
 
     channel_creds = grpc.ssl_channel_credentials(
         root_certificates=tls_ca.encode(),
-        certificate_chain=trusted_email_cert_pem.encode(),
+        certificate_chain=client_cert.encode(),
         private_key=client_key.encode(),
     )
     request = external_auth_pb2.CheckRequest()
-    request.attributes.source.certificate = urllib.parse.quote(
-        trusted_email_cert_pem, safe=""
-    )
+    # The same client cert (URL-encoded) is what the federator verifies against
+    # HA_CA_CERTIFICATE to derive the subject.
+    request.attributes.source.certificate = urllib.parse.quote(client_cert, safe="")
     request.attributes.request.http.host = "vikunja.local"
     request.attributes.request.http.path = "/api/v1"
 
     with grpc.secure_channel("localhost:9090", channel_creds) as channel:
         stub = external_auth_pb2_grpc.AuthorizationStub(channel)
-        resp = stub.Check(request)
+        resp = stub.Check(request, timeout=30)
 
     # The federator minted (or reused) a Vikunja session and injected a bearer.
     assert resp.HasField("ok_response")
