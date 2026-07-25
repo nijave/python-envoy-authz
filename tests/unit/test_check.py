@@ -116,6 +116,7 @@ def test_check_denies_401_on_terminal_federation_failure(
     assert (
         resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
     )  # 401
+    assert resp.denied_response.body == '{"error": "Unauthorized"}'
 
 
 def test_check_frigate_path_still_injects_x_proxy_secret(
