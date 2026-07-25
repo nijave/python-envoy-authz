@@ -99,23 +99,51 @@ def _now() -> float:
     return time.time()
 
 
-def _verify_incoming_bearer(bearer: str) -> tuple[bool, float]:
-    """Local HS256 fast-path (spec lines 394–398, 435–443). Returns
-    (signature_valid, exp). If no session_secret is configured, returns
-    (False, 0) — we never trust a bearer we cannot verify."""
-    from ..config import Settings
+# Vikunja's AuthTypeUser. Vikunja signs OTHER token types with the same
+# service.secret — notably link-share tokens (AuthTypeLinkShare), which are
+# handed out to anyone holding a public share hash. A valid signature therefore
+# does NOT imply "a user token", so the type is checked explicitly.
+_VIKUNJA_AUTH_TYPE_USER = 1
 
-    secret = Settings().secret_key.get_secret_value()
-    if not secret:
+
+def _verify_incoming_bearer(
+    bearer: str, session_secret: str | None, expect_user_id: str | None
+) -> tuple[bool, float]:
+    """Local HS256 fast-path (spec lines 394-398, 435-443). Returns
+    (trusted, exp). `session_secret` is the provider's Vikunja service.secret
+    (HS256). When it is unset/empty we return (False, 0) — we never trust an
+    incoming client bearer we cannot verify (spec: "without Vikunja's HS256
+    secret we cannot verify an incoming client bearer, so we never trust it").
+    This is distinct from the cached session, whose `exp` we decode without a
+    signature check (it came over our trusted channel).
+
+    A valid signature alone is NOT sufficient. The token must also be a user
+    token AND belong to `expect_user_id` — the Vikunja user this mTLS identity
+    is known to map to. Otherwise any cert holder could present a bearer minted
+    for a DIFFERENT user (or an unauthenticated link-share token) and be passed
+    straight through as them, which would make the mTLS identity — the entire
+    point of this gate — irrelevant on this branch.
+
+    `expect_user_id` is None when we have no established mapping for this
+    subject yet; there is then nothing to bind against, so we do not trust the
+    incoming bearer and fall through to the cache/federate path.
+    """
+    if not session_secret or not expect_user_id:
         return False, 0.0
     import jwt as pyjwt
     from jwt import InvalidTokenError
 
     try:
-        payload = pyjwt.decode(bearer, secret, algorithms=["HS256"])
+        payload = pyjwt.decode(bearer, session_secret, algorithms=["HS256"])
     except InvalidTokenError:
         return False, 0.0
     except Exception:
+        return False, 0.0
+    if payload.get("type") != _VIKUNJA_AUTH_TYPE_USER:
+        logger.info("incoming-bearer rejected: not a user token")
+        return False, 0.0
+    if str(payload.get("id")) != str(expect_user_id):
+        logger.warning("incoming-bearer rejected: belongs to a different user")
         return False, 0.0
     return True, float(payload.get("exp") or 0.0)
 
@@ -133,13 +161,21 @@ def get_bearer(
     key = subject.sub
     now = _now()
 
-    # 1. Incoming bearer present?
+    # The provider's Vikunja service.secret (HS256), used to verify an incoming
+    # client bearer locally. Unset → we never trust an incoming bearer.
+    session_secret = vikunja.session_secret
+
+    # 1. Incoming bearer present? Only trusted if it verifies AND belongs to the
+    # Vikunja user this mTLS subject already maps to (see _verify_incoming_bearer).
     if incoming_bearer:
-        valid, exp = _verify_incoming_bearer(incoming_bearer)
+        known = cache.get(key)
+        valid, exp = _verify_incoming_bearer(
+            incoming_bearer, session_secret, known.user_id if known else None
+        )
         if valid and exp > now + cache.margin:
             logger.info("allowed-through-client-bearer sub=%s", key)
             return None  # client's token is fine; no injection
-        # valid-but-near-expiry, or unverifiable → fall to step 2
+        # unbound, wrong user, near-expiry, or unverifiable → fall to step 2
 
     # 2. Cached and fresh? (fast path, no lock — dict reads are atomic)
     cached = cache.get(key)

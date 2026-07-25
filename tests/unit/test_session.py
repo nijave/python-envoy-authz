@@ -8,30 +8,37 @@ from envoy_authz.federator.session import CachedSession, SessionCache, get_beare
 from envoy_authz.federator.subject import Subject
 from envoy_authz.federator.vikunja import DownstreamError, VikunjaClient, VikunjaSession
 
+
 # Minimal providers config so `get_provider("vikunja")` resolves when this file
-# runs in isolation. Mirrors the YAML used by Task 6's `vikunja` fixture and the
-# conftest `op_client` fixture.
-OP_PROVIDERS_YAML = """
-providers:
-  vikunja:
-    hosts: ["vikunja.test"]
-    client_id: "vikunja"
-    client_secret: "vikunja-secret"
-    redirect_url: "http://localhost:3456/auth/openid/broker"
-    api_base: "http://localhost:3456"
-    provider_key: "broker"
-    scope: "openid profile email"
-"""
+# runs in isolation. `with_session_secret` toggles `extra.session_secret`, which
+# gates the incoming-bearer HS256 fast-path (spec lines 394-443): set it to the
+# secret `_bearer()` signs with so the fast-path tests can verify a bearer;
+# unset it so the no-secret test treats an incoming bearer as opaque.
+def _providers_yaml(*, with_session_secret: bool) -> str:
+    extra = (
+        '    extra:\n      session_secret: "test-secret-key"\n'
+        if with_session_secret
+        else ""
+    )
+    return (
+        "providers:\n"
+        "  vikunja:\n"
+        '    hosts: ["vikunja.test"]\n'
+        '    client_id: "vikunja"\n'
+        '    client_secret: "vikunja-secret"\n'
+        '    redirect_url: "http://localhost:3456/auth/openid/broker"\n'
+        '    api_base: "http://localhost:3456"\n'
+        '    provider_key: "broker"\n'
+        '    scope: "openid profile email"\n' + extra
+    )
 
 
 @pytest.fixture(autouse=True)
 def _env_and_providers(tmp_path, monkeypatch):
-    # `get_bearer` -> `_verify_incoming_bearer` constructs a full `Settings()`,
-    # which requires all four env vars. SECRET_KEY must match `_bearer()`'s
-    # signing secret for the verification fast-path tests; the other three just
-    # need to be present to pass pydantic validation (they are not read on this
-    # path). Loading providers lets StubVk/CountingVk resolve
-    # `get_provider("vikunja")`.
+    # Required Settings env vars (kept for any code path that constructs
+    # Settings()). Loading providers lets StubVk/CountingVk resolve
+    # `get_provider("vikunja")`; by default the provider carries a session_secret
+    # so the incoming-bearer fast-path is exercised.
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("FRIGATE_X_PROXY_SECRET", "test-frigate-secret")
     monkeypatch.setenv("HA_CA_CERTIFICATE", "dummy-ca")
@@ -39,7 +46,7 @@ def _env_and_providers(tmp_path, monkeypatch):
     from envoy_authz.federator import providers
 
     p = tmp_path / "providers.yaml"
-    p.write_text(OP_PROVIDERS_YAML)
+    p.write_text(_providers_yaml(with_session_secret=True))
     providers.load_providers(str(p))
 
 
@@ -52,11 +59,11 @@ def _subject(sub="abc123", email="alice@example.com", name="Alice"):
     return Subject(sub=sub, email=email, name=name)
 
 
-def _bearer(exp_delta=600, user_id="1"):
+def _bearer(exp_delta=600, user_id="1", token_type=1):
     import jwt as pyjwt
 
     return pyjwt.encode(
-        {"id": user_id, "exp": int(time.time()) + exp_delta, "type": "access"},
+        {"id": user_id, "exp": int(time.time()) + exp_delta, "type": token_type},
         "test-secret-key",
         algorithm="HS256",
     )
@@ -94,29 +101,61 @@ def test_cache_get_returns_stale_entry_ladder_enforces_freshness(cache):
 
 
 def test_get_bearer_incoming_valid_and_fresh_returns_none(cache):
-    # session_secret configured + incoming bearer verifies + not near-expiry
-    # -> return None (allow through unchanged).
-    bearer = _bearer(exp_delta=600)
+    # session_secret configured + bearer verifies + belongs to the Vikunja user
+    # this subject maps to + not near-expiry -> None (allow through unchanged).
+    cache.put(_subject().sub, _cached(exp_delta=300))  # establishes user_id="1"
+    bearer = _bearer(exp_delta=600, user_id="1")
     vk = _stub_vikunja()
     assert get_bearer(_subject(), bearer, vk, cache) is None
-    # Nothing was cached (we trusted the client's token).
-    assert cache.get(_subject().sub) is None
+
+
+def test_incoming_bearer_for_a_different_user_is_not_trusted(cache):
+    """A valid signature is not enough: without binding the token's `id` to the
+    mTLS-derived identity, any cert holder could present another user's bearer
+    and be served as them."""
+    # Stale and cookie-less, so the fall-through path is federation.
+    cache.put(_subject().sub, _cached(bearer="ours", refresh=None, exp_delta=-1))
+    other = _bearer(exp_delta=600, user_id="99")
+    vk = _stub_vikunja(federate_session=_sess("fresh", "fresh-rt"))
+    # Must NOT return None; falls through and injects our own session instead.
+    assert get_bearer(_subject(), other, vk, cache) == "fresh"
+
+
+def test_incoming_link_share_token_is_not_trusted(cache):
+    """Vikunja signs link-share tokens with the SAME service.secret and hands
+    them to anyone with a public share hash, so the type must be checked."""
+    cache.put(_subject().sub, _cached(bearer="ours", refresh=None, exp_delta=-1))
+    share = _bearer(exp_delta=600, user_id="1", token_type=4)  # AuthTypeLinkShare
+    vk = _stub_vikunja(federate_session=_sess("fresh", "fresh-rt"))
+    assert get_bearer(_subject(), share, vk, cache) == "fresh"
+
+
+def test_incoming_bearer_with_no_known_mapping_is_not_trusted(cache):
+    """With no established subject -> Vikunja-user mapping there is nothing to
+    bind against, so the incoming bearer is not trusted."""
+    bearer = _bearer(exp_delta=600, user_id="1")
+    vk = _stub_vikunja(federate_session=_sess("fresh", "fresh-rt"))
+    assert get_bearer(_subject(), bearer, vk, cache) == "fresh"
 
 
 def test_get_bearer_incoming_near_expiry_falls_to_cache(cache):
     bearer = _bearer(exp_delta=30)  # within margin (60s)
     vk = _stub_vikunja()
     cache.put(_subject().sub, _cached(bearer="cached-tok", exp_delta=300))
+    # user_id="1" matches the bearer, so only the near-expiry check rejects it.
     # Near-expiry incoming -> fall to step 2 -> cached fresh -> inject cached.
     assert get_bearer(_subject(), bearer, vk, cache) == "cached-tok"
 
 
-def test_get_bearer_no_session_secret_does_not_trust_incoming(cache, monkeypatch):
-    # Empty session_secret -> incoming bearer is opaque -> fall to cache.
-    # Override the autouse SECRET_KEY with an empty string so
-    # `_verify_incoming_bearer` sees no usable secret (Settings still validates
-    # because the field is merely provided, not absent).
-    monkeypatch.setenv("SECRET_KEY", "")
+def test_get_bearer_no_session_secret_does_not_trust_incoming(cache, tmp_path):
+    # No session_secret configured -> incoming bearer is opaque -> fall to cache.
+    # Reload the provider without `extra.session_secret` (the autouse fixture
+    # loads one with it by default).
+    from envoy_authz.federator import providers
+
+    p = tmp_path / "no-secret.yaml"
+    p.write_text(_providers_yaml(with_session_secret=False))
+    providers.load_providers(str(p))
     bearer = _bearer()
     vk = _stub_vikunja()
     cache.put(_subject().sub, _cached(bearer="cached-tok", exp_delta=300))
