@@ -19,6 +19,10 @@ proxy-secret authorization.
                                                     └──────────────────────┘
 ```
 
+(The `ext_authz` box also hosts the OP. After the federator mints an OP auth
+code, Vikunja redeems it back at this service's `/oauth/token` to mint its own
+id/access token — that return call is omitted from the diagram for clarity.)
+
 Envoy terminates the client mTLS certificate and forwards the verified cert PEM
 (URL-encoded) in `attributes.source.certificate`. On each `Check`:
 
@@ -54,7 +58,7 @@ subject DN DER + SubjectPublicKeyInfo DER):
    making the mTLS identity irrelevant on this branch.
 2. **Cached session?** A per-identity in-memory cache keyed by `sub`. A fresh
    cached entry → inject its bearer. A stale entry with a refresh cookie →
-   step 3. No cache → step 4.
+   step 3. A stale entry without a refresh cookie, or no cache → step 4.
 3. **Refresh** (`POST /api/v1/user/token/refresh` with the refresh cookie):
    `200` → rotate, cache, inject. `401` (revoked) or any other **terminal**
    failure → drop the cache entry and fall through to step 4, so a permanently
@@ -93,11 +97,13 @@ per-request `GET /api/v1/user`.
 ## The OAuth2/OIDC Provider (OP)
 
 Vikunja redeems the federation auth code at **our** OP token endpoint itself.
-The OP is a FastAPI router mounted under `IDP_ISSUER` when `OP_KEY_PATH` is set:
+The OP is a FastAPI router mounted at the app root and initialized at startup
+(the RSA signing key is loaded-or-created from `OP_KEY_PATH`); discovery
+advertises `IDP_ISSUER` as the issuer:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /.well-known/openid-configuration` | Discovery (issuer, endpoints, `RS256`, PKCE `S256`) |
+| `GET /.well-known/openid-configuration` | Discovery (issuer, endpoints, `RS256`, PKCE `S256`/`plain`) |
 | `GET /jwks.json` | Public signing key (`kid`, RS256) |
 | `POST /oauth/token` | Auth-code → `{access_token, id_token, refresh_token}`; refresh rotation |
 | `GET/POST /oauth/userinfo` | Scoped `sub`/`name`/`email` for a bearer |
