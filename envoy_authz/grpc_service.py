@@ -44,8 +44,8 @@ _VIKUNJA_TIMEOUT_SECONDS = 15.0
 def init_federator(provider_name: str) -> None:
     """Build the Vikunja client + session cache and assign the module globals.
 
-    Called once at startup (lifespan) after providers are loaded. Idempotent in
-    effect: re-assignment replaces the prior client/cache.
+    Called once at startup (lifespan) after providers are loaded. Safe to call
+    again: the prior httpx client is closed and the cache replaced.
     """
     global _vikunja, _SESSIONS
     import httpx
@@ -58,6 +58,10 @@ def init_federator(provider_name: str) -> None:
             f"provider {provider_name!r} is not defined in the providers file "
             f"(found: {sorted(PROVIDERS) or 'none'})"
         )
+    # Validate BEFORE closing: raising after the close would leave _vikunja
+    # holding an already-closed httpx client.
+    if _vikunja is not None:
+        _vikunja._client.close()  # release the prior pool on re-init
     _vikunja = VikunjaClient(
         provider,
         httpx.Client(base_url=provider.api_base, timeout=_VIKUNJA_TIMEOUT_SECONDS),
