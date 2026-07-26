@@ -1,4 +1,5 @@
 import asyncio
+import types
 from unittest.mock import MagicMock
 
 from grpc_health.v1 import health_pb2
@@ -6,8 +7,21 @@ from grpc_health.v1 import health_pb2
 from envoy_authz import __main__ as main_module
 
 
+def _fake_config():
+    """A Config stand-in carrying everything main() and the lifespan read off
+    settings, so neither has to touch the real environment."""
+    return types.SimpleNamespace(
+        settings=types.SimpleNamespace(
+            grpc_port=5000,
+            http_port=5001,
+            tls_cert_path="/var/lib/tls/tls.crt",
+            tls_key_path="/var/lib/tls/tls.key",
+        )
+    )
+
+
 def test_lifespan_starts_and_drains_grpc_server(monkeypatch):
-    fake_config = object()
+    fake_config = _fake_config()
     fake_server = MagicMock()
     fake_health = MagicMock()
 
@@ -48,6 +62,7 @@ def test_main_sets_up_and_instruments_when_enabled(monkeypatch):
     monkeypatch.setattr(
         main_module, "instrument_fastapi", lambda app: calls.append("fastapi")
     )
+    monkeypatch.setattr(main_module, "load_config", _fake_config)
     monkeypatch.setattr(main_module, "create_app", lambda lifespan: fake_app)
     monkeypatch.setattr(main_module.uvicorn, "run", lambda *a, **k: None)
 
@@ -69,6 +84,7 @@ def test_main_skips_instrumentation_when_disabled(monkeypatch):
     monkeypatch.setattr(
         main_module, "instrument_fastapi", lambda app: calls.append("fastapi")
     )
+    monkeypatch.setattr(main_module, "load_config", _fake_config)
     monkeypatch.setattr(main_module, "create_app", lambda lifespan: fake_app)
     monkeypatch.setattr(main_module.uvicorn, "run", lambda *a, **k: None)
 
@@ -79,7 +95,7 @@ def test_main_skips_instrumentation_when_disabled(monkeypatch):
 
 
 def test_lifespan_flushes_tracer_provider(monkeypatch):
-    fake_config = object()
+    fake_config = _fake_config()
     fake_server = MagicMock()
     fake_health = MagicMock()
     fake_provider = MagicMock()

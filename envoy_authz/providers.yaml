@@ -1,0 +1,25 @@
+# Downstream backends this federator can federate identities to.
+#
+# Values may reference the environment as ${VAR} or ${VAR:-default}. A variable
+# that is unset OR EMPTY falls back to its default; with no default, unset-or-
+# empty is a fatal startup error. Use an explicit `${VAR:-}` to opt into empty.
+#
+# Secrets deliberately have NO default: a missing injection must fail startup
+# rather than silently fall back to a value published in this repo.
+providers:
+  vikunja:
+    # ALLOWLIST of Envoy request hosts that federate to this backend. A host
+    # matching no provider is allowed through with no header injected.
+    hosts:
+      - "${VIKUNJA_HOST:-vikunja.apps.somemissing.info}"
+    client_id: "${VIKUNJA_CLIENT_ID:-vikunja}"
+    client_secret: "${VIKUNJA_CLIENT_SECRET}"
+    redirect_url: "${VIKUNJA_REDIRECT_URL:-http://localhost:3456/auth/openid/broker}"
+    api_base: "${VIKUNJA_API_BASE:-http://localhost:3456}"
+    provider_key: "${VIKUNJA_PROVIDER_KEY:-broker}"
+    scope: "openid profile email"
+    extra:
+      # Vikunja service.secret (HS256). Optional: when set, the federator can
+      # verify an incoming bearer's signature + exp locally before trusting it.
+      # When unset, incoming bearers are treated as opaque (cache is used).
+      session_secret: "${VIKUNJA_SESSION_SECRET:-}"
