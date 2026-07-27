@@ -54,6 +54,7 @@ def test_main_sets_up_and_instruments_when_enabled(monkeypatch):
     fake_provider = MagicMock()
     calls = []
     fake_app = MagicMock()
+    run = MagicMock()
 
     monkeypatch.setattr(main_module, "setup_telemetry", lambda: fake_provider)
     monkeypatch.setattr(
@@ -64,13 +65,14 @@ def test_main_sets_up_and_instruments_when_enabled(monkeypatch):
     )
     monkeypatch.setattr(main_module, "load_config", _fake_config)
     monkeypatch.setattr(main_module, "create_app", lambda lifespan: fake_app)
-    monkeypatch.setattr(main_module.uvicorn, "run", lambda *a, **k: None)
+    monkeypatch.setattr(main_module.uvicorn, "run", run)
 
     main_module.main()
 
     # gRPC instrumentor runs before FastAPI (must patch grpc.server pre-build).
     assert calls == ["grpc", "fastapi"]
     assert fake_app.state.tracer_provider is fake_provider
+    assert run.call_args.kwargs["host"] == "0.0.0.0"
 
 
 def test_main_skips_instrumentation_when_disabled(monkeypatch):
