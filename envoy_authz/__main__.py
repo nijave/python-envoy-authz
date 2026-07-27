@@ -69,7 +69,7 @@ def main():
     logger.info("Starting HTTPS server on port %s", s.http_port)
     uvicorn.run(
         app,
-        host="::",
+        host="0.0.0.0",
         port=s.http_port,
         ssl_certfile=s.tls_cert_path,
         ssl_keyfile=s.tls_key_path,
