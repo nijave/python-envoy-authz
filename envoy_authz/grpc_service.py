@@ -3,12 +3,11 @@ import urllib.parse
 
 import grpc
 from cryptography import x509
-from grpc_health.v1 import health, health_pb2_grpc
-from envoy.config.core.v3.base_pb2 import HeaderValueOption, HeaderValue
-from envoy.service.auth.v3 import external_auth_pb2
-from envoy.service.auth.v3 import external_auth_pb2_grpc
+from envoy.config.core.v3.base_pb2 import HeaderValue, HeaderValueOption
+from envoy.service.auth.v3 import external_auth_pb2, external_auth_pb2_grpc
 from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2, status_pb2
+from grpc_health.v1 import health, health_pb2_grpc
 from opentelemetry import trace
 
 from envoy_authz.identity import parse_client_identity

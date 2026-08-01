@@ -7,18 +7,18 @@ a User from the stateless code / token record — there is no USERS dict.
 from authlib.oauth2.rfc6749 import grants
 from authlib.oidc.core import grants as oidc_grants
 
-from . import keys, runtime
 from ..federator.store import (
-    OAuth2AuthorizationCode,
     REFRESH_TOKENS,
+    OAuth2AuthorizationCode,
     User,
     build_user_info,
     load_authorization_code,
 )
+from . import keys, runtime
 
 
 class AuthorizationCodeGrant(grants.AuthorizationCodeGrant):
-    TOKEN_ENDPOINT_AUTH_METHODS = ["client_secret_basic", "client_secret_post"]
+    TOKEN_ENDPOINT_AUTH_METHODS = ("client_secret_basic", "client_secret_post")
 
     # No generate_/save_authorization_code: codes are minted by the federator
     # (store.create_authorization_code) as signed, self-contained tokens; this
@@ -56,7 +56,7 @@ class AuthorizationCodeGrant(grants.AuthorizationCodeGrant):
 
 class RefreshTokenGrant(grants.RefreshTokenGrant):
     INCLUDE_NEW_REFRESH_TOKEN = True
-    TOKEN_ENDPOINT_AUTH_METHODS = ["client_secret_basic", "client_secret_post"]
+    TOKEN_ENDPOINT_AUTH_METHODS = ("client_secret_basic", "client_secret_post")
 
     def authenticate_refresh_token(self, refresh_token):
         record = REFRESH_TOKENS.get(refresh_token)

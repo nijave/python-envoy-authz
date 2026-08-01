@@ -1,7 +1,7 @@
 import os
 
 from joserfc import jwt
-from joserfc.jwk import RSAKey, KeySet
+from joserfc.jwk import KeySet, RSAKey
 
 
 def test_generated_key_is_not_group_or_world_readable(tmp_path):

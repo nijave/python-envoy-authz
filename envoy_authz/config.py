@@ -91,7 +91,7 @@ class Config:
 
 def configure_crl(store: crypto.X509Store, crl_pem: str) -> bool:
     crl = x509.load_pem_x509_crl(crl_pem.encode())
-    if crl.next_update_utc <= datetime.datetime.now(datetime.timezone.utc):
+    if crl.next_update_utc <= datetime.datetime.now(datetime.UTC):
         logger.warning("CRL is expired (next_update=%s), skipping", crl.next_update_utc)
         return False
     store.add_crl(crl)

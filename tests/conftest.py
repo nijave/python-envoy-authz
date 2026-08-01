@@ -10,20 +10,18 @@ from concurrent import futures
 
 import grpc
 import pytest
-
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-
-from envoy_authz.config import Config, build_store
-from envoy_authz.grpc_service import register_services
-from grpc_health.v1 import health_pb2, health_pb2_grpc
 from envoy.service.auth.v3 import (
     external_auth_pb2,
     external_auth_pb2_grpc,
 )
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 
+from envoy_authz.config import Config, build_store
+from envoy_authz.grpc_service import register_services
 
 FRIGATE_TEST_SECRET = "test-frigate-secret-abc123"
 
@@ -46,7 +44,7 @@ def _build_ca(common_name: str) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     key = _generate_key()
     name = _ca_name(common_name)
     public_key = key.public_key()
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -97,7 +95,7 @@ def _build_signed_cert(
     key = _generate_key()
     public_key = key.public_key()
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -155,7 +153,7 @@ def _build_self_signed_leaf(
     key = _generate_key()
     public_key = key.public_key()
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -202,7 +200,7 @@ def _build_server_cert(
     """Self-signed server cert with a SubjectAltName for TLS validation."""
     key = _generate_key()
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -285,7 +283,7 @@ def _build_crl(
     *,
     expired: bool = False,
 ) -> x509.CertificateRevocationList:
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     if expired:
         last_update = now - datetime.timedelta(days=2)
         next_update = now - datetime.timedelta(days=1)
