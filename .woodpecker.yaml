@@ -45,7 +45,7 @@ steps:
 
   build-and-push:
     # renovate: datasource=docker depName=moby/buildkit
-    image: moby/buildkit:v0.30.0
+    image: moby/buildkit:v0.32.0
     environment:
       BUILDKIT_HOST: tcp://buildkitd.woodpecker.svc.cluster.local:1234
     commands:
