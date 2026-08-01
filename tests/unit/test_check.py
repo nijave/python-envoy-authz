@@ -9,7 +9,6 @@ import time
 
 import httpx
 import respx
-
 from envoy.type.v3 import http_status_pb2
 from google.rpc import code_pb2
 
@@ -147,6 +146,33 @@ def test_check_denies_401_on_terminal_federation_failure(
         lambda *a, **k: (_ for _ in ()).throw(
             DownstreamError("callback 403", retryable=False)
         ),
+    )
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=email_client_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert (
+        resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
+    )  # 401
+    assert resp.denied_response.body == '{"error": "Unauthorized"}'
+
+
+def test_check_denies_401_when_subject_derivation_fails(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """Regression: derive_subject's identity re-parse (when the best-effort
+    parse earlier in Check already failed) was unprotected, so a raise there
+    escaped Check entirely instead of denying — contradicting "parsing is
+    best-effort and must never affect the decision" for federation hosts."""
+    from envoy_authz import grpc_service
+
+    monkeypatch.setattr(
+        grpc_service,
+        "derive_subject",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")),
     )
     req = grpc_servicer.check_request(
         host="vikunja.example.com",

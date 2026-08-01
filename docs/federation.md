@@ -213,6 +213,7 @@ stack mounts it at `/etc/envoy-authz/providers.yaml`).
 # Supply the mTLS CA PEM + TLS material (see docker-compose.vikunja.yml NOTE)
 docker compose -f docker-compose.vikunja.yml up -d --build
 
-RUN_INTEGRATION=1 TLS_CA=<server-ca.pem> TLS_CLIENT_KEY=<client.key> \
+RUN_INTEGRATION=1 TLS_CA=<server-ca.pem> \
+  TLS_CLIENT_CERT=<client.crt> TLS_CLIENT_KEY=<client.key> \
   poetry run pytest tests/integration/test_integration_vikunja.py -v
 ```

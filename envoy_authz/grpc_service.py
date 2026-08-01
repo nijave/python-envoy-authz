@@ -236,7 +236,15 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 and client_cert is not None
                 and provider_for_host(host) is not None
             ):
-                subject = derive_subject(client_cert, identity)
+                try:
+                    # identity may be None here if the best-effort parse above
+                    # failed; derive_subject would then re-parse the same cert
+                    # unprotected, so failures must not escape this block and
+                    # crash the RPC (parsing must never affect the decision).
+                    subject = derive_subject(client_cert, identity)
+                except Exception:
+                    logger.exception("Failed to derive subject for federation")
+                    return _deny(retryable=False)
                 incoming_bearer = _extract_bearer(headers)
                 try:
                     upstream = get_bearer(subject, incoming_bearer, _vikunja, _SESSIONS)

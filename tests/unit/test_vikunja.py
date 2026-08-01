@@ -98,16 +98,14 @@ def test_refresh_extracts_cookie_with_comma_bearing_expires(vikunja):
 
 
 @respx.mock
-def test_refresh_401_raises_refresh_revoked(vikunja):
+def test_refresh_401_is_non_retryable(vikunja):
     # 401 means the session was revoked/expired; the ladder treats this as
-    # "fall through to federation", not a deny. The client surfaces it as a
-    # distinct sentinel so the ladder can branch.
+    # "fall through to federation" (see session._renew), not a deny.
     respx.post("http://localhost:3456/api/v1/user/token/refresh").mock(
         return_value=httpx.Response(401)
     )
     with pytest.raises(DownstreamError) as exc:
         vikunja.refresh("expired")
-    assert exc.value.refresh_revoked
     assert not exc.value.retryable
 
 
@@ -120,7 +118,6 @@ def test_refresh_5xx_raises_retryable(vikunja):
     with pytest.raises(DownstreamError) as exc:
         vikunja.refresh("old-rt")
     assert exc.value.retryable
-    assert not exc.value.refresh_revoked
 
 
 @respx.mock
@@ -132,7 +129,6 @@ def test_refresh_4xx_terminal_raises_non_retryable(vikunja):
     with pytest.raises(DownstreamError) as exc:
         vikunja.refresh("old-rt")
     assert not exc.value.retryable
-    assert not exc.value.refresh_revoked
 
 
 @respx.mock

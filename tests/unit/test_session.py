@@ -180,7 +180,7 @@ def test_get_bearer_cached_stale_refreshes(cache):
 def test_get_bearer_refresh_401_falls_through_to_federate(cache):
     cache.put(_subject().sub, _cached(bearer="stale", refresh="old-rt", exp_delta=-1))
     vk = _stub_vikunja(
-        refresh_raises=DownstreamError("revoked", refresh_revoked=True),
+        refresh_raises=DownstreamError("revoked"),
         federate_session=_sess("federated", "fed-rt"),
     )
     assert get_bearer(_subject(), None, vk, cache) == "federated"

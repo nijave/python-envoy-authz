@@ -138,6 +138,7 @@ def _verify_incoming_bearer(
     except InvalidTokenError:
         return False, 0.0
     except Exception:
+        logger.exception("incoming-bearer decode failed unexpectedly")
         return False, 0.0
     if payload.get("type") != _VIKUNJA_AUTH_TYPE_USER:
         logger.info("incoming-bearer rejected: not a user token")

@@ -27,23 +27,20 @@ _REFRESH_COOKIE_NAME = "vikunja_refresh_token"
 class DownstreamError(Exception):
     """Vikunja returned an error or was unreachable.
 
-    Flags drive the Check deny status:
-    - `refresh_revoked`: the 401-on-refresh case (session revoked/expired) —
-      the ladder falls through to federation rather than denying.
-    - `retryable`: Vikunja was unreachable or returned 5xx — Check denies with
-      HTTP 503 so clients can retry. Terminal failures (4xx other than the
-      refresh-401 fall-through) deny with HTTP 401.
+    `retryable` drives the Check deny status: Vikunja was unreachable or
+    returned 5xx — Check denies with HTTP 503 so clients can retry. Terminal
+    failures (4xx, including a 401 on refresh, which means the session was
+    revoked/expired) deny with HTTP 401, and on refresh specifically the
+    ladder falls through to federation instead of denying.
     """
 
     def __init__(
         self,
         message: str,
         *,
-        refresh_revoked: bool = False,
         retryable: bool = False,
     ):
         super().__init__(message)
-        self.refresh_revoked = refresh_revoked
         self.retryable = retryable
 
 
@@ -74,10 +71,11 @@ class VikunjaClient:
 
     def refresh(self, refresh_cookie: str) -> VikunjaSession:
         """POST /api/v1/user/token/refresh with the Cookie header; return the
-        rotated session. Raises DownstreamError(refresh_revoked=True) on 401
-        (so the ladder falls through to federation). Raises
-        DownstreamError(retryable=True) on transport error / 5xx (Check denies
-        503). Raises DownstreamError on a terminal 4xx (Check denies 401)."""
+        rotated session. Raises DownstreamError on 401 (session revoked/
+        expired; the ladder falls through to federation instead of denying).
+        Raises DownstreamError(retryable=True) on transport error / 5xx (Check
+        denies 503). Raises DownstreamError on a terminal 4xx (Check denies
+        401)."""
         try:
             resp = self._client.post(
                 _REFRESH_PATH,
@@ -88,7 +86,7 @@ class VikunjaClient:
             raise DownstreamError("refresh transport error", retryable=True) from exc
         if resp.status_code == 401:
             logger.info("Vikunja refresh rejected (revoked/expired)")
-            raise DownstreamError("refresh rejected", refresh_revoked=True)
+            raise DownstreamError("refresh rejected")
         if resp.status_code != 200:
             logger.warning("Vikunja refresh failed (status=%d)", resp.status_code)
             raise DownstreamError(
