@@ -1,0 +1,75 @@
+# End-to-end federation stack for the mTLS→OAuth2 federator + Vikunja.
+#
+# Bring up with:
+#   docker compose -f docker-compose.vikunja.yml up -d --build
+#
+# Then run the integration test (see tests/integration/test_integration_vikunja.py):
+#   RUN_INTEGRATION=1 TLS_CA=<server-ca.pem> \
+#     TLS_CLIENT_CERT=<client.crt> TLS_CLIENT_KEY=<client.key> \
+#     poetry run pytest tests/integration/test_integration_vikunja.py -v
+#
+# Operator-supplied prerequisites:
+#   - ./tls/tls.{crt,key} : the gRPC/OP server's TLS cert+key (server CA = TLS_CA)
+#   - HA_CA_CERTIFICATE   : the CA PEM that signed the mTLS client certs
+#                          (export it; the federator reads it as a PEM string)
+#   - Networking: Vikunja must resolve IDP_ISSUER to the federator's OP. Within a
+#     single compose network set IDP_ISSUER=https://federator:5001 (and ensure the
+#     OP TLS cert SAN covers that name), or add a hosts/DNS entry for idp.local.
+services:
+  vikunja:
+    image: vikunja/vikunja:0.24
+    environment:
+      VIKUNJA_SERVICE_SECRET: integration-secret
+      # OpenID provider config (field names per Vikunja's openid config docs).
+      VIKUNJA_AUTH_OPENID_ENABLED: "true"
+      VIKUNJA_AUTH_OPENID_PROVIDERS_BROKER_NAME: "broker"
+      VIKUNJA_AUTH_OPENID_PROVIDERS_BROKER_AUTHURL: "https://idp.local"
+      VIKUNJA_AUTH_OPENID_PROVIDERS_BROKER_CLIENTID: "vikunja"
+      VIKUNJA_AUTH_OPENID_PROVIDERS_BROKER_CLIENTSECRET: "vikunja-secret"
+      VIKUNJA_AUTH_LOCAL_ENABLED: "0"
+    ports:
+      - "3456:3456"
+
+  federator:
+    build: .
+    environment:
+      # --- existing (mTLS / Frigate) ---
+      FRIGATE_X_PROXY_SECRET: "x"
+      # HA_CA_CERTIFICATE is the CA PEM *contents* (not a path) — supply it via an
+      # env_file or export it in your shell before `up`. It must be the CA that
+      # signed the mTLS client certs.
+      HA_CA_CERTIFICATE: "${HA_CA_CERTIFICATE:?supply the mTLS CA PEM}"
+      # --- OP / federator ---
+      IDP_ISSUER: "https://idp.local"
+      SECRET_KEY: "integration-secret"        # signs OP auth codes (itsdangerous)
+      PROVIDERS_FILE: "/etc/envoy-authz/providers.yaml"
+      OP_KEY_PATH: "/data/op_key.pem"
+      # Vikunja is a sibling service on the compose network (not localhost, which
+      # inside the container is the federator itself).
+      VIKUNJA_API_BASE: "http://vikunja:3456"
+      # providers.yaml no longer defaults the client secret (a default would be a
+      # published credential), so it must be supplied explicitly.
+      VIKUNJA_CLIENT_SECRET: "vikunja-secret"
+      # Federation is an allowlist of request hosts; the integration test sends
+      # host=vikunja.local.
+      VIKUNJA_HOST: "vikunja.local"
+      VIKUNJA_SESSION_SECRET: "integration-secret"
+      # --- transport ---
+      GRPC_PORT: "9090"                        # ext_authz gRPC (matches the test)
+      HTTP_PORT: "5001"                        # OP HTTPS (discovery/JWKS/token/userinfo)
+      TLS_CERT_PATH: "/var/lib/tls/tls.crt"
+      TLS_KEY_PATH: "/var/lib/tls/tls.key"
+    volumes:
+      - ./envoy_authz/providers.yaml:/etc/envoy-authz/providers.yaml:ro
+      # Operator-supplied TLS material (see prerequisites above):
+      - ./tls/tls.crt:/var/lib/tls/tls.crt:ro
+      - ./tls/tls.key:/var/lib/tls/tls.key:ro
+      - op-key:/data
+    ports:
+      - "9090:9090"   # ext_authz gRPC (mTLS)
+      - "5001:5001"   # OP HTTPS
+    depends_on:
+      - vikunja
+
+volumes:
+  op-key:
