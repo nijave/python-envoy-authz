@@ -253,7 +253,14 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                     logger.exception("Failed to derive subject for federation")
                     return _deny(retryable=False)
 
-                if path in (frontend_oidc_path(provider), callback_path(provider)):
+                # Envoy's request.path includes the query string (Vikunja's
+                # callback is always hit as .../broker?code=...&state=...), so
+                # comparing the raw path against a bare route never matches.
+                path_no_query = path.split("?", 1)[0]
+                if path_no_query in (
+                    frontend_oidc_path(provider),
+                    callback_path(provider),
+                ):
                     # Vikunja's own OIDC machinery: the callback page the
                     # bootstrap script below navigates to, and the backend
                     # call that page makes to redeem the code. Neither needs

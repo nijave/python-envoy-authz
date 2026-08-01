@@ -156,9 +156,12 @@ def test_check_frontend_oidc_path_passes_through_untouched(
         raise AssertionError("get_bearer must not run on Vikunja's own OIDC path")
 
     monkeypatch.setattr(grpc_service, "get_bearer", _boom)
+    # Real Envoy always includes the query string in `path` — this is exactly
+    # how the bootstrap script's own navigation (?code=...&state=...) arrives.
+    # A bare-path comparison with no query string would pass vacuously here.
     req = grpc_servicer.check_request(
         host="vikunja.example.com",
-        path="/auth/openid/broker",
+        path="/auth/openid/broker?code=abc123&state=xyz789",
         client_cert_pem=email_client_cert_pem,
         headers={"sec-fetch-dest": "document"},
     )
