@@ -9,9 +9,9 @@ acquire_token is Flask-only).
 from authlib._joserfc_helpers import import_any_key
 from authlib.common.security import generate_token
 from authlib.consts import default_json_headers
-from authlib.oauth2.rfc6750 import BearerTokenGenerator, BearerTokenValidator
 from authlib.oauth2.rfc6749 import AuthorizationServer as _AuthorizationServer
 from authlib.oauth2.rfc6749 import ResourceProtector
+from authlib.oauth2.rfc6750 import BearerTokenGenerator, BearerTokenValidator
 from authlib.oauth2.rfc7636 import CodeChallenge
 from authlib.oidc.core import UserInfoEndpoint
 

@@ -96,12 +96,12 @@ def test_code_is_single_use(tmp_path, monkeypatch):
 
 def test_distinct_codes_are_independently_redeemable(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
-    kwargs = dict(
-        client_id="vikunja",
-        redirect_uri="http://localhost:3456/auth/openid/broker",
-        scope="openid profile email",
-        user_id="abc123",
-    )
+    kwargs = {
+        "client_id": "vikunja",
+        "redirect_uri": "http://localhost:3456/auth/openid/broker",
+        "scope": "openid profile email",
+        "user_id": "abc123",
+    }
     a, b = create_authorization_code(**kwargs), create_authorization_code(**kwargs)
     assert a != b  # distinct jti
     assert load_authorization_code(a) is not None
@@ -128,7 +128,7 @@ def test_check_client_secret_rejects_non_ascii_without_raising(tmp_path, monkeyp
 
 
 def test_signer_must_be_configured(tmp_path, monkeypatch):
-    import envoy_authz.federator.store as store
+    from envoy_authz.federator import store
 
     monkeypatch.setattr(store, "_signer", None)
     with pytest.raises(RuntimeError):

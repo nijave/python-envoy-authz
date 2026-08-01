@@ -9,8 +9,8 @@ sync authlib calls never await.
 from collections import defaultdict
 
 from authlib.oauth2.rfc6749 import (
-    JsonRequest,
     JsonPayload,
+    JsonRequest,
     OAuth2Payload,
     OAuth2Request,
 )

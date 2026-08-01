@@ -13,8 +13,8 @@ def init_op(app, key_path: str, federation) -> None:
     """
     from ..federator import store
     from . import runtime
-    from .server import init_server
     from .routes import router
+    from .server import init_server
 
     runtime.configure(federation.idp_issuer)
     store.configure(federation.secret_key, federation.code_ttl_seconds)

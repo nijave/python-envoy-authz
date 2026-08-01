@@ -8,7 +8,8 @@ from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Request
 
-from . import keys, runtime, server as op_server
+from . import keys, runtime
+from . import server as op_server
 
 router = APIRouter()
 
@@ -63,7 +64,7 @@ async def userinfo(request: Request):
     if request.method == "POST":
         try:
             data = await request.json()
-        except Exception:
+        except ValueError:
             data = {}
     else:
         data = dict(request.query_params)

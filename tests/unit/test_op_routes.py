@@ -3,9 +3,8 @@ from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
 
-from envoy_authz.op import keys
 from envoy_authz.federator.store import create_authorization_code
-
+from envoy_authz.op import keys
 from tests.conftest import OP_TEST_ISSUER
 
 

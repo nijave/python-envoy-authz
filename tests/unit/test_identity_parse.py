@@ -30,7 +30,7 @@ def _sign_self_signed(
     extensions: list[tuple[x509.ExtensionType, bool]],
 ) -> x509.Certificate:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     subject = issuer = x509.Name(name_attrs)
     builder = (
         x509.CertificateBuilder()
