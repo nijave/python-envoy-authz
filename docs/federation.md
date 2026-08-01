@@ -80,9 +80,20 @@ per-request `GET /api/v1/user`.
 
 | `get_bearer` result | `Check` response |
 |---|---|
-| `str` | `OK` + `headers: Authorization: Bearer <str>` |
+| `str` | `OK` + `headers: Authorization: Bearer <str>` + `response_headers_to_add: X-Authz-Bootstrap-Token: <str>` |
 | `None` | `OK` with **no** `Authorization` header (client's bearer allowed through) |
 | raises `DownstreamError` | deny |
+
+`headers` (the `Authorization` bearer) is added to the request Envoy forwards
+*upstream* to the backend — invisible to the client. `response_headers_to_add`
+is added to the response Envoy sends back *downstream* to the client, only
+when a fresh bearer was actually minted (never on the `None` "client bearer
+already valid" branch, since there is nothing new to hand back). This exists
+so a browser SPA — which has no way to see the upstream-only `Authorization`
+header — can still discover the bearer: an Envoy Lua filter on the response
+path reads `X-Authz-Bootstrap-Token` and seeds it into the document response
+(see the compose/Envoy simulation notes), letting the SPA boot already
+authenticated without any user-visible OAuth redirect.
 
 **Deny status policy:**
 

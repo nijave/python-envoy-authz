@@ -83,6 +83,34 @@ def test_check_injects_federated_bearer(
     assert resp.status.code == code_pb2.OK
     added = {h.header.key: h.header.value for h in resp.ok_response.headers}
     assert added["Authorization"] == f"Bearer {bearer}"
+    # Also handed to Envoy's *response* path (not just the upstream request),
+    # so a response-side filter can seed the browser's own session — the SPA
+    # has no way to see the upstream-only Authorization header above.
+    to_browser = {
+        h.header.key: h.header.value for h in resp.ok_response.response_headers_to_add
+    }
+    assert to_browser["X-Authz-Bootstrap-Token"] == bearer
+
+
+@respx.mock
+def test_check_omits_bootstrap_token_when_client_bearer_already_valid(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """get_bearer returns None (client's own bearer verified locally) → no
+    fresh token was minted, so there is nothing new to bootstrap the browser
+    with; the response-side header must be absent, not merely empty."""
+    from envoy_authz import grpc_service
+
+    monkeypatch.setattr(grpc_service, "get_bearer", lambda *a, **k: None)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=email_client_cert_pem,
+        bearer="client-bearer",
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
+    assert list(resp.ok_response.response_headers_to_add) == []
 
 
 def test_check_allows_through_when_get_bearer_returns_none(

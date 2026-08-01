@@ -209,6 +209,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
             logger.info("✓ Authorized", extra=log_extra)
 
             return_headers: list[HeaderValueOption] = []
+            response_headers: list[HeaderValueOption] = []
             host = request.attributes.request.http.host
 
             # For allowed requests to Frigate, add the trusted proxy token header
@@ -261,6 +262,21 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                         )
                     )
                     logger.info("injected-bearer sub=%s", subject.sub)
+                    # Handed to Envoy's *response* path too (a header on the
+                    # HttpConnectionManager response, not the upstream
+                    # request `headers` above), so a downstream Lua filter can
+                    # bootstrap the browser's own session. The Authorization
+                    # header above is never visible to the client's own JS —
+                    # it is added to the request Envoy forwards to Vikunja,
+                    # not to the response Envoy sends back.
+                    response_headers.append(
+                        HeaderValueOption(
+                            header=HeaderValue(
+                                key="X-Authz-Bootstrap-Token",
+                                value=upstream,
+                            ),
+                        )
+                    )
                 else:
                     logger.info("allowed-through-client-bearer sub=%s", subject.sub)
 
@@ -268,6 +284,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 status=status_pb2.Status(code=code_pb2.OK),
                 ok_response=external_auth_pb2.OkHttpResponse(
                     headers=return_headers,
+                    response_headers_to_add=response_headers,
                 ),
             )
         else:
