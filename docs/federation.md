@@ -81,6 +81,46 @@ this whole model derives a session from the mTLS cert per request, so a full
 page reload legitimately re-deriving a fresh one is consistent with treating
 "logout" as meaningless while the cert is presented.
 
+## Native app OAuth (authorization-code + PKCE)
+
+The browser bootstrap logs Vikunja's *web frontend* in. The native app
+(`vikunja-flutter`) instead runs a standard OAuth **authorization-code + PKCE**
+login against the public URL, and must never see the downstream OIDC handshake
+— only its own code and tokens. `envoy_authz.federator.app_oauth` synthesizes
+both legs entirely from the mTLS identity (`grpc_service.Check` answers each
+with a `denied_response`, so neither hit reaches Vikunja):
+
+- **`GET /oauth/authorize`** (matched by `client_id=vikunja-flutter`, checked
+  *before* the browser-bootstrap branch since it is itself a document
+  navigation): validates `response_type=code`, the `redirect_uri` allowlist and
+  an S256 `code_challenge`, mints a **subject-bound** PKCE code
+  (`store.create_authorization_code`, `user_id=subject.sub`), and denies with a
+  **302** straight to `vikunja-flutter://callback?code=…&state=…`. The browser
+  follows the custom-scheme redirect back into the app; no Vikunja page renders.
+- **`POST …/oauth/token`** (matched by `client_id` in the body): reads the body
+  (see the `with_request_body` requirement below), verifies the code
+  (signature, TTL, single use), the `redirect_uri`, PKCE, and that the **same
+  certificate subject** redeems it, then federates server-side
+  (`vikunja.federate`) and returns the Vikunja bearer as
+  `{access_token, token_type, expires_in, refresh_token}`. `grant_type=
+  refresh_token` (also subject-bound) re-federates for a fresh bearer. The app
+  posts this body as **JSON** (`Content-Type: application/json`), not the RFC
+  6749 form encoding, so the body parser honours the Content-Type and accepts
+  either.
+
+Security note: the whole exchange is over mutually-authenticated TLS, so the
+real principal on both legs is the client certificate. Binding the code and
+refresh token to `subject.sub` — refusing them to any other certificate — is
+what makes this safe for this transport; PKCE is verified additionally.
+
+> **Deployment requirement:** the token/refresh bodies arrive in the POST body,
+> which an ext_authz filter only forwards to `Check` when configured with
+> [`with_request_body`](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_authz/v3/ext_authz.proto)
+> (`max_request_bytes` ≥ a few KiB, `pack_as_bytes: false`). Without it the
+> body is empty, the token leg is simply not matched, and the request falls
+> through to Vikunja (which 404s it). Set this on the edge Envoy/Contour
+> ext_authz filter in every environment that serves the native app.
+
 ## The `get_bearer` decision ladder
 
 Per request, for a derived `Subject` (`sub` is a 16-char SHA-256 of the cert's

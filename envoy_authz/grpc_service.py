@@ -1,3 +1,4 @@
+import json
 import logging
 import urllib.parse
 
@@ -13,6 +14,7 @@ from opentelemetry import trace
 from envoy_authz.identity import parse_client_identity
 
 from .config import Config, verify_client_cert
+from .federator import app_oauth
 from .federator.browser_bootstrap import (
     frontend_oidc_path,
     is_document_navigation,
@@ -20,9 +22,9 @@ from .federator.browser_bootstrap import (
     render_bootstrap_html,
 )
 from .federator.providers import PROVIDERS, get_provider, provider_for_host
-from .federator.session import SessionCache, get_bearer
+from .federator.session import CachedSession, SessionCache, get_bearer
 from .federator.store import create_authorization_code
-from .federator.subject import derive_subject
+from .federator.subject import Subject, derive_subject
 from .federator.vikunja import DownstreamError, VikunjaClient, callback_path
 
 logger = logging.getLogger(__name__)
@@ -257,6 +259,18 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 # callback is always hit as .../broker?code=...&state=...), so
                 # comparing the raw path against a bare route never matches.
                 path_no_query = path.split("?", 1)[0]
+
+                # The native app's OAuth flow (federator.app_oauth), served
+                # entirely here so the client never sees Vikunja's OIDC dance:
+                # GET /oauth/authorize -> 302 to the app's redirect_uri with a
+                # subject-bound PKCE code; POST .../oauth/token -> the federated
+                # Vikunja bearer as JSON. Checked before the browser-bootstrap
+                # branch below, since the authorize GET is itself a document
+                # navigation that branch would otherwise hijack.
+                app_response = self._maybe_app_oauth(request, path_no_query, subject)
+                if app_response is not None:
+                    return app_response
+
                 if path_no_query in (
                     frontend_oidc_path(provider),
                     callback_path(provider),
@@ -358,6 +372,137 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                     body='{"error": "Unauthorized"}',
                 ),
             )
+
+    def _maybe_app_oauth(self, request, path_no_query: str, subject: Subject):
+        """Serve the native app's OAuth authorize/token legs, or return None if
+        this request is neither (so Check falls through to normal federation).
+
+        Both legs are answered with an Envoy `denied_response`, so the request
+        never reaches Vikunja: the app sees only its own redirect and tokens.
+        """
+        http = request.attributes.request.http
+        query = urllib.parse.parse_qs(http.path.partition("?")[2])
+        if app_oauth.is_app_authorize(path_no_query, query):
+            return self._app_authorize(query, subject)
+        if http.method == "POST" and path_no_query.endswith(
+            app_oauth.TOKEN_PATH_SUFFIX
+        ):
+            form = _parse_token_body(http)
+            if app_oauth.is_app_token(path_no_query, form):
+                return self._app_token(form, subject)
+        return None
+
+    def _app_authorize(self, query, subject: Subject):
+        try:
+            location = app_oauth.build_authorize_location(query, subject)
+        except app_oauth.AppOAuthError as exc:
+            logger.info(
+                "app-authorize-rejected sub=%s error=%s", subject.sub, exc.error
+            )
+            return _oauth_error(exc)
+        logger.info("app-authorize-redirect sub=%s", subject.sub)
+        return external_auth_pb2.CheckResponse(
+            status=status_pb2.Status(code=code_pb2.PERMISSION_DENIED),
+            denied_response=external_auth_pb2.DeniedHttpResponse(
+                status=http_status_pb2.HttpStatus(
+                    code=http_status_pb2.StatusCode.Found  # 302
+                ),
+                headers=[
+                    HeaderValueOption(
+                        header=HeaderValue(key="Location", value=location),
+                    ),
+                ],
+            ),
+        )
+
+    def _app_token(self, form, subject: Subject):
+        def mint_session(subj: Subject):
+            # Federate fresh and cache it, so the app's subsequent /api/v1 calls
+            # reuse this session through the get_bearer ladder.
+            session = _vikunja.federate(subj)
+            _SESSIONS.put(
+                subj.sub,
+                CachedSession(
+                    bearer=session.bearer,
+                    refresh_cookie=session.refresh_cookie,
+                    exp=session.exp,
+                    user_id=session.user_id,
+                ),
+            )
+            return session
+
+        try:
+            body = app_oauth.handle_token(form, subject, mint_session)
+        except app_oauth.AppOAuthError as exc:
+            logger.info("app-token-rejected sub=%s error=%s", subject.sub, exc.error)
+            return _oauth_error(exc)
+        except DownstreamError as exc:
+            logger.warning("app-token-federation-failure sub=%s", subject.sub)
+            return _deny(exc.retryable)
+        except Exception:
+            # The token endpoint parses attacker-shaped input; anything the
+            # grant handlers did not expect must still come back as a clean
+            # OAuth error, never abort the Check RPC with a stack trace.
+            logger.exception("app-token-unhandled-error sub=%s", subject.sub)
+            return _oauth_error(
+                app_oauth.AppOAuthError("invalid_request", "malformed token request")
+            )
+        return _json_response(http_status_pb2.StatusCode.OK, body)
+
+
+def _request_body(http) -> str:
+    """The request body Envoy forwards when the ext_authz filter is configured
+    with `with_request_body`. Empty when it is not — the app OAuth token leg is
+    then simply not matched and the request falls through untouched."""
+    if http.body:
+        return http.body
+    raw = http.raw_body
+    return raw.decode("utf-8", "replace") if raw else ""
+
+
+def _parse_token_body(http) -> dict:
+    """Parse the token POST body into a flat param dict.
+
+    The Vikunja app posts the token request as JSON (`postUnauthenticated` sets
+    Content-Type: application/json), not the RFC 6749 form encoding — so honour
+    the Content-Type: JSON when it says so, form-encoding otherwise (which also
+    covers a standards-compliant client). A body that does not parse yields an
+    empty dict, so the request simply falls through to normal federation."""
+    body = _request_body(http)
+    if not body:
+        return {}
+    content_type = http.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return urllib.parse.parse_qs(body)
+
+
+def _json_response(status_code, obj: dict):
+    """A `denied_response` carrying a JSON body straight to the client (Envoy
+    does not proxy upstream). Used for both the token success (200) and OAuth
+    errors; the gRPC status stays PERMISSION_DENIED so Envoy uses it."""
+    return external_auth_pb2.CheckResponse(
+        status=status_pb2.Status(code=code_pb2.PERMISSION_DENIED),
+        denied_response=external_auth_pb2.DeniedHttpResponse(
+            status=http_status_pb2.HttpStatus(code=status_code),
+            headers=[
+                HeaderValueOption(
+                    header=HeaderValue(key="Content-Type", value="application/json"),
+                ),
+            ],
+            body=json.dumps(obj),
+        ),
+    )
+
+
+def _oauth_error(exc: app_oauth.AppOAuthError):
+    return _json_response(
+        exc.status, {"error": exc.error, "error_description": exc.description}
+    )
 
 
 def register_services(server: grpc.Server, config: Config) -> health.HealthServicer:
