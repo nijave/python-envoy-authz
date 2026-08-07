@@ -341,3 +341,289 @@ def test_init_federator_names_the_missing_provider(tmp_path):
         init_federator("vikunja")
     assert "vikunja" in str(exc.value)
     assert "vikunja-prod" in str(exc.value)
+
+
+def _s256_challenge(verifier: str) -> str:
+    import base64
+    import hashlib
+
+    return (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+
+
+def test_check_app_authorize_returns_302_to_the_app_callback(
+    grpc_servicer, email_client_cert_pem
+):
+    """The app's GET /oauth/authorize (a document navigation) must be answered
+    with a 302 straight to vikunja-flutter://callback carrying a code — NOT
+    hijacked into the browser bootstrap that logs the web frontend in."""
+    from urllib.parse import parse_qs, urlparse
+
+    challenge = _s256_challenge("a" * 64)
+    path = (
+        "/oauth/authorize?response_type=code&client_id=vikunja-flutter"
+        "&redirect_uri=vikunja-flutter%3A%2F%2Fcallback"
+        f"&code_challenge={challenge}&code_challenge_method=S256&state=xyz"
+    )
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path=path,
+        client_cert_pem=email_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.Found  # 302
+    location = {h.header.key: h.header.value for h in resp.denied_response.headers}[
+        "Location"
+    ]
+    parsed = urlparse(location)
+    assert f"{parsed.scheme}://{parsed.netloc}" == "vikunja-flutter://callback"
+    query = parse_qs(parsed.query)
+    assert query["code"][0]
+    assert query["state"] == ["xyz"]
+
+
+@respx.mock
+def test_check_app_token_returns_federated_bearer_as_json(
+    grpc_servicer, email_client_cert_pem
+):
+    """The app's POST /api/v1/oauth/token (body read via with_request_body) must
+    return the server-side federated Vikunja bearer as a JSON token response."""
+    import json
+    from urllib.parse import parse_qs, urlparse
+
+    import jwt as pyjwt
+
+    verifier = "a" * 64
+    challenge = _s256_challenge(verifier)
+
+    # 1. Authorize to obtain a subject-bound code (same servicer, same signer).
+    apath = (
+        "/oauth/authorize?response_type=code&client_id=vikunja-flutter"
+        "&redirect_uri=vikunja-flutter%3A%2F%2Fcallback"
+        f"&code_challenge={challenge}&code_challenge_method=S256&state=s"
+    )
+    areq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path=apath,
+        client_cert_pem=email_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    aresp = grpc_servicer.servicer.Check(areq, None)
+    location = {h.header.key: h.header.value for h in aresp.denied_response.headers}[
+        "Location"
+    ]
+    code = parse_qs(urlparse(location).query)["code"][0]
+
+    # 2. The token leg federates server-side; mock Vikunja's callback exchange.
+    bearer = pyjwt.encode(
+        {"id": "1", "exp": int(time.time()) + 600, "type": "access"},
+        "test-secret-key",
+        algorithm="HS256",
+    )
+    respx.post("http://localhost:3456/api/v1/auth/openid/broker/callback").mock(
+        return_value=httpx.Response(
+            200,
+            headers={"set-cookie": "vikunja_refresh_token=rt; HttpOnly"},
+            json={"token": bearer},
+        )
+    )
+
+    # 3. Exchange the code. The Vikunja app posts the token request as JSON
+    #    (Content-Type: application/json), NOT the RFC 6749 form encoding — this
+    #    is the exact shape that reached Vikunja as a 400 before the federator
+    #    learned to read a JSON token body.
+    payload = json.dumps(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": verifier,
+            "client_id": "vikunja-flutter",
+            "redirect_uri": "vikunja-flutter://callback",
+        }
+    )
+    treq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        headers={"content-type": "application/json"},
+    )
+    treq.attributes.request.http.method = "POST"
+    treq.attributes.request.http.body = payload
+    tresp = grpc_servicer.servicer.Check(treq, None)
+
+    assert tresp.status.code == code_pb2.PERMISSION_DENIED
+    assert tresp.denied_response.status.code == http_status_pb2.StatusCode.OK  # 200
+    body = json.loads(tresp.denied_response.body)
+    assert body["access_token"] == bearer
+    assert body["token_type"] == "Bearer"
+    assert body["refresh_token"]
+
+
+@respx.mock
+def test_check_app_token_accepts_form_encoded_body(
+    grpc_servicer, email_client_cert_pem
+):
+    """A standards-compliant (RFC 6749) form-encoded token body must also work,
+    so the endpoint is not app-specific in its wire format."""
+    import json
+    from urllib.parse import parse_qs, urlencode, urlparse
+
+    import jwt as pyjwt
+
+    verifier = "b" * 64
+    challenge = _s256_challenge(verifier)
+    apath = (
+        "/oauth/authorize?response_type=code&client_id=vikunja-flutter"
+        "&redirect_uri=vikunja-flutter%3A%2F%2Fcallback"
+        f"&code_challenge={challenge}&code_challenge_method=S256&state=s"
+    )
+    areq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path=apath,
+        client_cert_pem=email_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    location = {
+        h.header.key: h.header.value
+        for h in grpc_servicer.servicer.Check(areq, None).denied_response.headers
+    }["Location"]
+    code = parse_qs(urlparse(location).query)["code"][0]
+
+    bearer = pyjwt.encode(
+        {"id": "1", "exp": int(time.time()) + 600, "type": "access"},
+        "test-secret-key",
+        algorithm="HS256",
+    )
+    respx.post("http://localhost:3456/api/v1/auth/openid/broker/callback").mock(
+        return_value=httpx.Response(
+            200,
+            headers={"set-cookie": "vikunja_refresh_token=rt; HttpOnly"},
+            json={"token": bearer},
+        )
+    )
+    form = urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": verifier,
+            "client_id": "vikunja-flutter",
+            "redirect_uri": "vikunja-flutter://callback",
+        }
+    )
+    treq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    treq.attributes.request.http.method = "POST"
+    treq.attributes.request.http.body = form
+    tresp = grpc_servicer.servicer.Check(treq, None)
+    assert tresp.denied_response.status.code == http_status_pb2.StatusCode.OK
+    assert json.loads(tresp.denied_response.body)["access_token"] == bearer
+
+
+def test_check_app_token_answers_malformed_input_with_an_oauth_error(
+    grpc_servicer, email_client_cert_pem
+):
+    """A JSON token body can put any type in any field. That must come back as
+    a clean 400 invalid_request — never an unhandled exception aborting the
+    Check RPC (the token endpoint parses attacker-shaped input)."""
+    import json
+
+    treq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        headers={"content-type": "application/json"},
+    )
+    treq.attributes.request.http.method = "POST"
+    treq.attributes.request.http.body = json.dumps(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": 12345,
+            "client_id": "vikunja-flutter",
+        }
+    )
+    resp = grpc_servicer.servicer.Check(treq, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.BadRequest
+    assert json.loads(resp.denied_response.body)["error"] == "invalid_request"
+
+
+def test_check_app_token_unexpected_error_is_a_clean_oauth_error(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """Even a bug in the grant handlers must surface as an OAuth error response,
+    not crash the RPC: fail closed AND well-formed."""
+    import json
+
+    from envoy_authz.federator import app_oauth
+
+    def boom(form, subject, mint_session):
+        raise TypeError("handler bug reached by malformed input")
+
+    monkeypatch.setattr(app_oauth, "handle_token", boom)
+    treq = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        headers={"content-type": "application/json"},
+    )
+    treq.attributes.request.http.method = "POST"
+    treq.attributes.request.http.body = json.dumps(
+        {"grant_type": "authorization_code", "client_id": "vikunja-flutter"}
+    )
+    resp = grpc_servicer.servicer.Check(treq, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.BadRequest
+    assert json.loads(resp.denied_response.body)["error"] == "invalid_request"
+
+
+def test_check_app_token_post_without_a_body_falls_through(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """Without `with_request_body` Envoy sends no body: the token POST must not
+    be intercepted, falling through to the normal bearer-injection ladder."""
+    from envoy_authz import grpc_service
+
+    monkeypatch.setattr(grpc_service, "get_bearer", lambda *a, **k: None)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        bearer="client-bearer",
+    )
+    req.attributes.request.http.method = "POST"
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
+
+
+def test_check_app_token_post_for_another_client_falls_through(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """A token POST whose body names a different client_id is not the app's
+    request and must fall through untouched."""
+    from urllib.parse import urlencode
+
+    from envoy_authz import grpc_service
+
+    monkeypatch.setattr(grpc_service, "get_bearer", lambda *a, **k: None)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/oauth/token",
+        client_cert_pem=email_client_cert_pem,
+        bearer="client-bearer",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    req.attributes.request.http.method = "POST"
+    req.attributes.request.http.body = urlencode(
+        {"grant_type": "authorization_code", "client_id": "someone-else"}
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK

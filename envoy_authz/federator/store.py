@@ -30,6 +30,15 @@ _REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600
 _signer: URLSafeTimedSerializer | None = None
 _code_ttl_seconds: int = 10
 
+# Refresh token for the native app's OAuth flow (federator.app_oauth). Signed
+# with the same SECRET_KEY but a distinct salt so an auth code can never be
+# replayed as a refresh token or vice versa. Stateless like the auth code, but
+# long-lived; single use is not enforced because every use is additionally
+# gated by the caller's mTLS certificate (the token grant refuses a refresh
+# token whose subject does not match the presented certificate).
+_app_refresh_signer: URLSafeTimedSerializer | None = None
+_APP_REFRESH_TTL_SECONDS = 30 * 24 * 3600
+
 # jti -> unix expiry, for single-use enforcement of the stateless auth codes
 # (RFC 6749 4.1.2: a code MUST NOT be redeemed more than once). Bounded by the
 # code TTL: entries are pruned on every access, so this holds at most the codes
@@ -40,8 +49,9 @@ _used_code_lock = threading.Lock()
 
 def configure(secret_key: str, code_ttl_seconds: int) -> None:
     """Bind the auth-code signing key + TTL. Called once at startup."""
-    global _signer, _code_ttl_seconds
+    global _signer, _code_ttl_seconds, _app_refresh_signer
     _signer = URLSafeTimedSerializer(secret_key, salt="broker-auth-code")
+    _app_refresh_signer = URLSafeTimedSerializer(secret_key, salt="app-refresh-token")
     _code_ttl_seconds = code_ttl_seconds
     with _used_code_lock:
         _used_code_jtis.clear()
@@ -368,3 +378,34 @@ def load_authorization_code(code, max_age=None):
         logger.warning("auth code replay rejected (jti already redeemed)")
         return None
     return payload
+
+
+def _app_refresh_signer_or_raise() -> URLSafeTimedSerializer:
+    if _app_refresh_signer is None:
+        raise RuntimeError(
+            "app refresh signer is not configured; call store.configure() at startup"
+        )
+    return _app_refresh_signer
+
+
+def create_app_refresh_token(user_id, email=None, name=None) -> str:
+    """Mint a stateless refresh token for the native app's OAuth flow.
+
+    Carries the federated subject so the token grant can re-federate without a
+    server-side session store. The email/name travel inside so a re-mint after
+    the access token expires keeps the same downstream user.
+    """
+    return _app_refresh_signer_or_raise().dumps(
+        {"user_id": user_id, "email": email, "name": name, "iat": int(time.time())}
+    )
+
+
+def load_app_refresh_token(token, max_age=None):
+    """Verify and decode an app refresh token. Returns the payload dict, or None
+    if the signature is invalid or the token is older than the refresh TTL."""
+    if max_age is None:
+        max_age = _APP_REFRESH_TTL_SECONDS
+    try:
+        return _app_refresh_signer_or_raise().loads(token, max_age=max_age)
+    except BadData:
+        return None
