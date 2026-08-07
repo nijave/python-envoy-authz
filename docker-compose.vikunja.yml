@@ -17,7 +17,7 @@
 #     OP TLS cert SAN covers that name), or add a hosts/DNS entry for idp.local.
 services:
   vikunja:
-    image: vikunja/vikunja:0.24
+    image: vikunja/vikunja:2.5
     environment:
       VIKUNJA_SERVICE_SECRET: integration-secret
       # OpenID provider config (field names per Vikunja's openid config docs).
