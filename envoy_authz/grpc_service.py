@@ -13,10 +13,17 @@ from opentelemetry import trace
 from envoy_authz.identity import parse_client_identity
 
 from .config import Config, verify_client_cert
+from .federator.browser_bootstrap import (
+    frontend_oidc_path,
+    is_document_navigation,
+    new_state,
+    render_bootstrap_html,
+)
 from .federator.providers import PROVIDERS, get_provider, provider_for_host
 from .federator.session import SessionCache, get_bearer
+from .federator.store import create_authorization_code
 from .federator.subject import derive_subject
-from .federator.vikunja import DownstreamError, VikunjaClient
+from .federator.vikunja import DownstreamError, VikunjaClient, callback_path
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +241,7 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 _vikunja is not None
                 and _SESSIONS is not None
                 and client_cert is not None
-                and provider_for_host(host) is not None
+                and (provider := provider_for_host(host)) is not None
             ):
                 try:
                     # identity may be None here if the best-effort parse above
@@ -245,24 +252,94 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                 except Exception:
                     logger.exception("Failed to derive subject for federation")
                     return _deny(retryable=False)
-                incoming_bearer = _extract_bearer(headers)
-                try:
-                    upstream = get_bearer(subject, incoming_bearer, _vikunja, _SESSIONS)
-                except DownstreamError as exc:
-                    logger.warning("denied-federation-failure sub=%s", subject.sub)
-                    return _deny(exc.retryable)
-                if upstream is not None:
-                    return_headers.append(
-                        HeaderValueOption(
-                            header=HeaderValue(
-                                key="Authorization",
-                                value=f"Bearer {upstream}",
-                            ),
+
+                # Envoy's request.path includes the query string (Vikunja's
+                # callback is always hit as .../broker?code=...&state=...), so
+                # comparing the raw path against a bare route never matches.
+                path_no_query = path.split("?", 1)[0]
+                if path_no_query in (
+                    frontend_oidc_path(provider),
+                    callback_path(provider),
+                ):
+                    # Vikunja's own OIDC machinery: the callback page the
+                    # bootstrap script below navigates to, and the backend
+                    # call that page makes to redeem the code. Neither needs
+                    # (or should get) an injected bearer, and intercepting
+                    # either would break the exchange rather than complete it.
+                    logger.info("allowed-through-oidc-path sub=%s", subject.sub)
+                elif is_document_navigation(headers):
+                    # A real address-bar/link navigation, not an API/XHR call.
+                    # The Authorization header the ladder below injects is only
+                    # ever visible to Vikunja's *backend* — never to the
+                    # browser's own JS — so a browser hitting this host
+                    # directly would still fall through to Vikunja's own
+                    # client-side OIDC login, which this federator's OP has no
+                    # /oauth/authorize to answer (op/routes.py: codes are
+                    # minted server-to-server only). Do what clicking
+                    # Vikunja's "Login" button would have done instead: mint a
+                    # code, then deny with a page that stores `state` and
+                    # navigates to the callback exactly as that button would
+                    # — Envoy sends `denied_response` straight to the browser
+                    # without ever proxying this hit to Vikunja.
+                    if not subject.email:
+                        logger.warning(
+                            "cannot bootstrap sub=%s: client cert has no email "
+                            "(rfc822Name SAN)",
+                            subject.sub,
                         )
+                        return _deny(retryable=False)
+                    code = create_authorization_code(
+                        client_id=provider.client_id,
+                        redirect_uri=provider.redirect_url,
+                        scope=provider.scope,
+                        user_id=subject.sub,
+                        email=subject.email,
+                        name=subject.name,
+                        nonce=None,
                     )
-                    logger.info("injected-bearer sub=%s", subject.sub)
+                    logger.info("bootstrap-redirect sub=%s", subject.sub)
+                    return external_auth_pb2.CheckResponse(
+                        status=status_pb2.Status(code=code_pb2.PERMISSION_DENIED),
+                        denied_response=external_auth_pb2.DeniedHttpResponse(
+                            status=http_status_pb2.HttpStatus(
+                                code=http_status_pb2.StatusCode.OK
+                            ),
+                            headers=[
+                                HeaderValueOption(
+                                    header=HeaderValue(
+                                        key="Content-Type",
+                                        value="text/html; charset=utf-8",
+                                    ),
+                                ),
+                            ],
+                            body=render_bootstrap_html(
+                                redirect_path=frontend_oidc_path(provider),
+                                code=code,
+                                state=new_state(),
+                            ),
+                        ),
+                    )
                 else:
-                    logger.info("allowed-through-client-bearer sub=%s", subject.sub)
+                    incoming_bearer = _extract_bearer(headers)
+                    try:
+                        upstream = get_bearer(
+                            subject, incoming_bearer, _vikunja, _SESSIONS
+                        )
+                    except DownstreamError as exc:
+                        logger.warning("denied-federation-failure sub=%s", subject.sub)
+                        return _deny(exc.retryable)
+                    if upstream is not None:
+                        return_headers.append(
+                            HeaderValueOption(
+                                header=HeaderValue(
+                                    key="Authorization",
+                                    value=f"Bearer {upstream}",
+                                ),
+                            )
+                        )
+                        logger.info("injected-bearer sub=%s", subject.sub)
+                    else:
+                        logger.info("allowed-through-client-bearer sub=%s", subject.sub)
 
             return external_auth_pb2.CheckResponse(
                 status=status_pb2.Status(code=code_pb2.OK),

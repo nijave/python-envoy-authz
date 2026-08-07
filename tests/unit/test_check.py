@@ -105,6 +105,92 @@ def test_check_allows_through_when_get_bearer_returns_none(
     assert "Authorization" not in added
 
 
+def test_check_document_navigation_returns_bootstrap_page(
+    grpc_servicer, email_client_cert_pem
+):
+    """A real browser navigation (Sec-Fetch-Dest: document) to a federated
+    host gets a denied_response whose HTTP status is 200 and whose body is a
+    page that stores `state` and navigates to the callback — mirroring
+    Vikunja's own "Login" button — rather than the silent Authorization
+    header, which a browser SPA can never see."""
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/",
+        client_cert_pem=email_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.OK
+    added = {h.header.key: h.header.value for h in resp.denied_response.headers}
+    assert added["Content-Type"] == "text/html; charset=utf-8"
+    assert "localStorage.setItem('state'" in resp.denied_response.body
+    assert "/auth/openid/broker?code=" in resp.denied_response.body
+
+
+def test_check_denies_bootstrap_when_cert_has_no_email(
+    grpc_servicer, trusted_client_cert_pem
+):
+    # trusted_client_cert_pem carries no rfc822Name SAN — same "cannot
+    # provision a downstream user" constraint as the existing federate() path.
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/",
+        client_cert_pem=trusted_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
+
+
+def test_check_frontend_oidc_path_passes_through_untouched(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """The callback page the bootstrap script navigates to must render
+    normally, not get intercepted into another bootstrap page (which would
+    loop) or federated (get_bearer must not run for it)."""
+    from envoy_authz import grpc_service
+
+    def _boom(*a, **k):
+        raise AssertionError("get_bearer must not run on Vikunja's own OIDC path")
+
+    monkeypatch.setattr(grpc_service, "get_bearer", _boom)
+    # Real Envoy always includes the query string in `path` — this is exactly
+    # how the bootstrap script's own navigation (?code=...&state=...) arrives.
+    # A bare-path comparison with no query string would pass vacuously here.
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/auth/openid/broker?code=abc123&state=xyz789",
+        client_cert_pem=email_client_cert_pem,
+        headers={"sec-fetch-dest": "document"},
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
+    assert [h.header.key for h in resp.ok_response.headers] == []
+
+
+def test_check_backend_oidc_callback_path_passes_through_untouched(
+    grpc_servicer, email_client_cert_pem, monkeypatch
+):
+    """The frontend's own POST redeeming the code must reach Vikunja
+    untouched too, even though it is not a document navigation."""
+    from envoy_authz import grpc_service
+
+    def _boom(*a, **k):
+        raise AssertionError("get_bearer must not run on Vikunja's own OIDC path")
+
+    monkeypatch.setattr(grpc_service, "get_bearer", _boom)
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1/auth/openid/broker/callback",
+        client_cert_pem=email_client_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.OK
+    assert [h.header.key for h in resp.ok_response.headers] == []
+
+
 def test_check_denies_503_on_retryable_federation_failure(
     grpc_servicer, email_client_cert_pem, monkeypatch
 ):

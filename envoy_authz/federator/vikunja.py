@@ -24,6 +24,16 @@ _REFRESH_PATH = "/api/v1/user/token/refresh"
 _REFRESH_COOKIE_NAME = "vikunja_refresh_token"
 
 
+def callback_path(provider: Provider) -> str:
+    """The Vikunja backend path that redeems a federation auth code.
+
+    Shared with the browser-bootstrap path (grpc_service.Check): that path must
+    let a request to this exact path through untouched rather than treat it as
+    a plain federated request, or Vikunja's own callback exchange never runs.
+    """
+    return f"/api/v1/auth/openid/{provider.provider_key}/callback"
+
+
 class DownstreamError(Exception):
     """Vikunja returned an error or was unreachable.
 
@@ -124,7 +134,7 @@ class VikunjaClient:
             name=subject.name,
             nonce=None,
         )
-        callback = f"/api/v1/auth/openid/{self._provider.provider_key}/callback"
+        callback = callback_path(self._provider)
         try:
             resp = self._client.post(
                 callback,

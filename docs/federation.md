@@ -31,14 +31,55 @@ Envoy terminates the client mTLS certificate and forwards the verified cert PEM
 2. On the **Frigate path** (`host == FRIGATE_HOST`) the existing behavior is
    preserved: inject `X-Proxy-Secret`. Federation does **not** run there.
 3. If the request host is **claimed by a provider** (its `hosts` allowlist, see
-   `providers.yaml`), the service **federates**: it derives a stable subject from
-   the cert, runs the `get_bearer` decision ladder, and either injects
-   `Authorization: Bearer <token>` upstream, lets the client's own bearer through
-   unchanged, or denies.
+   `providers.yaml`), the service derives a stable subject from the cert, then:
+   - Vikunja's **own OIDC paths** (the frontend callback route and the backend
+     endpoint that redeems a code) are let through **untouched** — see
+     [Browser bootstrap](#browser-bootstrap-document-navigations) below.
+   - A **document navigation** (a real browser address-bar/link hit, not an
+     API/XHR call) gets the browser-bootstrap `denied_response` instead of the
+     silent ladder — see below.
+   - Everything else **federates**: it runs the `get_bearer` decision ladder,
+     and either injects `Authorization: Bearer <token>` upstream, lets the
+     client's own bearer through unchanged, or denies.
 4. Any other allowed host passes through with **no header added**. Host scoping is
    an allowlist on purpose: attaching this ext_authz to a new vhost must not
    silently start injecting some other backend's bearer over the client's own
    credential.
+
+## Browser bootstrap (document navigations)
+
+`get_bearer`'s `Authorization` header is added to the request Envoy forwards
+*upstream* — invisible to a browser's own JS. A browser SPA hitting Vikunja
+directly therefore never becomes "logged in" from that alone: it still falls
+through to Vikunja's own client-side OIDC login, which redirects to this
+service's OP `authorization_endpoint` — a route that does not exist (see
+`op/routes.py`: codes are minted server-to-server only, by design).
+
+Reconciling this without any Envoy/Contour changes: `envoy_authz.federator.
+browser_bootstrap` detects a top-level navigation (`Sec-Fetch-Dest: document`,
+falling back to `Accept: text/html`) to a federated host and, instead of the
+silent ladder, denies with an HTTP **200** whose body is a small page that
+does exactly what Vikunja's own "Login with `<provider>`" button would have:
+stores a `state` in `localStorage`, then navigates to Vikunja's callback route
+with a code this service already minted (`store.create_authorization_code`,
+the same call `federate()` uses). `DeniedHttpResponse.status`/`headers`/`body`
+are fully caller-controlled — Envoy sends them straight to the browser without
+ever proxying that hit to Vikunja — so this replicates Vikunja's real,
+CSRF-checked front-channel flow (`OpenIdAuth.vue` hard-fails on a `state`
+mismatch, so a bare server-side redirect that skipped setting it first would
+not work).
+
+Two paths must be exempted from this (and from the ladder) or the exchange
+breaks: `frontend_oidc_path(provider)` (the callback page the bootstrap script
+navigates to) and `vikunja.callback_path(provider)` (the API call that page
+makes to redeem the code) are always let through untouched.
+
+There is no way to tell from the server side whether a browser already holds
+a valid Vikunja JWT, so this runs on **every** document navigation to a
+federated host, not just the first. That is intentional, not a cache miss:
+this whole model derives a session from the mTLS cert per request, so a full
+page reload legitimately re-deriving a fresh one is consistent with treating
+"logout" as meaningless while the cert is presented.
 
 ## The `get_bearer` decision ladder
 
@@ -78,9 +119,13 @@ per-request `GET /api/v1/user`.
 
 ## Return contract
 
+This ladder only runs for non-navigation requests (see
+[Browser bootstrap](#browser-bootstrap-document-navigations) above for how a
+real browser page load is handled instead):
+
 | `get_bearer` result | `Check` response |
 |---|---|
-| `str` | `OK` + `headers: Authorization: Bearer <str>` |
+| `str` | `OK` + `headers: Authorization: Bearer <str>` (upstream request only) |
 | `None` | `OK` with **no** `Authorization` header (client's bearer allowed through) |
 | raises `DownstreamError` | deny |
 
