@@ -21,14 +21,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SCOPE = "openid profile email"
 
-# OP-issued refresh tokens are pruned on this schedule. The access-token records
-# in TOKENS carry their own expires_in and are pruned via is_expired().
+# OP-issued access/refresh tokens are STATELESS: signed, self-contained payloads
+# (like the auth code below), not rows in a server-side table. This is what lets
+# the OP run more than one replica — a token minted by one replica validates on
+# any other, because validation is a signature+TTL check, not an in-memory
+# lookup. (An opaque token in a per-process dict 401s the moment Vikunja's
+# token→userinfo calls land on different replicas.) The signed timestamp bounds
+# their lifetime; there is no server-side revocation (see the refresh grant).
+ACCESS_TOKEN_TTL_SECONDS = 3600
 _REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600
 
 # Bound once at startup (see configure), so no request path re-reads the
 # environment or re-parses .env to sign or verify an auth code.
 _signer: URLSafeTimedSerializer | None = None
 _code_ttl_seconds: int = 10
+
+# OP access/refresh token signers. Distinct salts (all bound to the same
+# SECRET_KEY, which is shared across replicas) so no token type can be replayed
+# as another — an access token is not a valid refresh token, code, etc.
+_access_token_signer: URLSafeTimedSerializer | None = None
+_op_refresh_signer: URLSafeTimedSerializer | None = None
 
 # Refresh token for the native app's OAuth flow (federator.app_oauth). Signed
 # with the same SECRET_KEY but a distinct salt so an auth code can never be
@@ -48,10 +60,13 @@ _used_code_lock = threading.Lock()
 
 
 def configure(secret_key: str, code_ttl_seconds: int) -> None:
-    """Bind the auth-code signing key + TTL. Called once at startup."""
+    """Bind the auth-code + token signing keys and TTL. Called once at startup."""
     global _signer, _code_ttl_seconds, _app_refresh_signer
+    global _access_token_signer, _op_refresh_signer
     _signer = URLSafeTimedSerializer(secret_key, salt="broker-auth-code")
     _app_refresh_signer = URLSafeTimedSerializer(secret_key, salt="app-refresh-token")
+    _access_token_signer = URLSafeTimedSerializer(secret_key, salt="op-access-token")
+    _op_refresh_signer = URLSafeTimedSerializer(secret_key, salt="op-refresh-token")
     _code_ttl_seconds = code_ttl_seconds
     with _used_code_lock:
         _used_code_jtis.clear()
@@ -245,14 +260,10 @@ class OAuth2Token(TokenMixin):
 
 
 CLIENTS = {}
-TOKENS = {}
-REFRESH_TOKENS = {}
 
 
 def _reset():
     CLIENTS.clear()
-    TOKENS.clear()
-    REFRESH_TOKENS.clear()
 
 
 def seed():
@@ -270,39 +281,112 @@ def query_client(client_id):
     return CLIENTS.get(client_id)
 
 
-def _prune_tokens(now: float) -> None:
-    """Drop expired records so TOKENS/REFRESH_TOKENS cannot grow unboundedly.
-
-    Without this every federation permanently leaked two dict entries (each
-    holding the user's email/name) for the life of the process.
-    """
-    for access_token, record in list(TOKENS.items()):
-        if record.is_expired():
-            del TOKENS[access_token]
-    for refresh_token, record in list(REFRESH_TOKENS.items()):
-        if now > record.issued_at + _REFRESH_TOKEN_TTL_SECONDS:
-            del REFRESH_TOKENS[refresh_token]
-
-
 def save_token(token, request):
-    user = request.user
+    """No-op: OP access/refresh tokens are stateless (self-contained signed
+    strings minted by create_access_token / create_op_refresh_token), so there
+    is nothing to persist. Retained as authlib's AuthorizationServer.save_token
+    hook. Making this a store write is what broke multi-replica: a token in one
+    process's dict is invisible to the replica that later serves userinfo."""
+
+
+def _access_signer_or_raise() -> URLSafeTimedSerializer:
+    if _access_token_signer is None:
+        raise RuntimeError(
+            "access-token signer is not configured; call store.configure() at startup"
+        )
+    return _access_token_signer
+
+
+def _op_refresh_signer_or_raise() -> URLSafeTimedSerializer:
+    if _op_refresh_signer is None:
+        raise RuntimeError(
+            "op-refresh signer is not configured; call store.configure() at startup"
+        )
+    return _op_refresh_signer
+
+
+def create_access_token(client, user, scope) -> str:
+    """Mint a STATELESS OP access token: a signed payload carrying the client,
+    subject and the user claims userinfo needs. Any replica can validate it with
+    only the shared SECRET_KEY (see query_token) — no server-side token store."""
     user_id = user.get_user_id() if user else None
-    record = OAuth2Token(
-        client_id=request.client.client_id,
-        user_id=user_id,
-        email=getattr(user, "email", None),
-        name=getattr(user, "name", None),
-        **token,
+    return _access_signer_or_raise().dumps(
+        {
+            # Random so every minted token is a distinct string even when two are
+            # issued in the same second with identical claims (the signed payload
+            # is otherwise deterministic). Not tracked — statelessness means no
+            # single-use enforcement (see create_op_refresh_token).
+            "jti": secrets.token_urlsafe(8),
+            "client_id": getattr(client, "client_id", client),
+            "user_id": user_id,
+            "email": getattr(user, "email", None),
+            "name": getattr(user, "name", None),
+            "scope": scope or "",
+            "iat": int(time.time()),
+        }
     )
-    _prune_tokens(time.time())
-    TOKENS[record.access_token] = record
-    if record.refresh_token:
-        REFRESH_TOKENS[record.refresh_token] = record
+
+
+def create_op_refresh_token(client, user, scope) -> str:
+    """Mint a STATELESS OP refresh token (distinct salt from the access token).
+    Stateless like the app-refresh token: bounded by its signed TTL, not
+    single-use — a shared revocation store is exactly the per-replica state this
+    fix removes."""
+    user_id = user.get_user_id() if user else None
+    return _op_refresh_signer_or_raise().dumps(
+        {
+            # Unique per mint (so rotation yields a distinct token); not tracked.
+            "jti": secrets.token_urlsafe(8),
+            "client_id": getattr(client, "client_id", client),
+            "user_id": user_id,
+            "email": getattr(user, "email", None),
+            "name": getattr(user, "name", None),
+            "scope": scope or "",
+            "iat": int(time.time()),
+        }
+    )
+
+
+def load_op_refresh_token(token, max_age=None):
+    """Verify + decode an OP refresh token. Returns the payload dict, or None if
+    the signature is invalid or the token is older than the refresh TTL."""
+    if max_age is None:
+        max_age = _REFRESH_TOKEN_TTL_SECONDS
+    try:
+        return _op_refresh_signer_or_raise().loads(token, max_age=max_age)
+    except BadData:
+        return None
+
+
+def _token_record_from_payload(payload, access_token=None, refresh_token=None):
+    record = OAuth2Token(
+        client_id=payload["client_id"],
+        user_id=payload["user_id"],
+        email=payload.get("email"),
+        name=payload.get("name"),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        scope=payload.get("scope", ""),
+        expires_in=ACCESS_TOKEN_TTL_SECONDS,
+    )
+    # Anchor is_expired() to when the token was actually issued, not now — load
+    # already rejected anything past the signed TTL, this just keeps the window
+    # from doubling.
+    record.issued_at = payload.get("iat", record.issued_at)
     return record
 
 
 def query_token(access_token):
-    return TOKENS.get(access_token)
+    """Validate a bearer access token statelessly: verify its signature + TTL and
+    reconstruct the token record from the signed payload. No dict lookup, so it
+    resolves identically on every replica (the multi-replica userinfo fix)."""
+    try:
+        payload = _access_signer_or_raise().loads(
+            access_token, max_age=ACCESS_TOKEN_TTL_SECONDS
+        )
+    except BadData:
+        return None
+    return _token_record_from_payload(payload, access_token=access_token)
 
 
 def create_authorization_code(
