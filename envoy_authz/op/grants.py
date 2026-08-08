@@ -8,11 +8,12 @@ from authlib.oauth2.rfc6749 import grants
 from authlib.oidc.core import grants as oidc_grants
 
 from ..federator.store import (
-    REFRESH_TOKENS,
     OAuth2AuthorizationCode,
     User,
+    _token_record_from_payload,
     build_user_info,
     load_authorization_code,
+    load_op_refresh_token,
 )
 from . import keys, runtime
 
@@ -59,10 +60,13 @@ class RefreshTokenGrant(grants.RefreshTokenGrant):
     TOKEN_ENDPOINT_AUTH_METHODS = ("client_secret_basic", "client_secret_post")
 
     def authenticate_refresh_token(self, refresh_token):
-        record = REFRESH_TOKENS.get(refresh_token)
-        if record and not record.is_expired() and not record.is_revoked():
-            return record
-        return None
+        # Stateless: verify the signature + TTL and reconstruct the record from
+        # the signed payload, so a refresh minted on one replica is honored on
+        # any other (no shared REFRESH_TOKENS dict).
+        payload = load_op_refresh_token(refresh_token)
+        if payload is None:
+            return None
+        return _token_record_from_payload(payload, refresh_token=refresh_token)
 
     def authenticate_user(self, credential):
         return User(
@@ -72,12 +76,11 @@ class RefreshTokenGrant(grants.RefreshTokenGrant):
         )
 
     def revoke_old_credential(self, refresh_token):
-        token_string = getattr(refresh_token, "refresh_token", refresh_token)
-        record = REFRESH_TOKENS.pop(token_string, None)
-        if record is None and not isinstance(refresh_token, str):
-            record = refresh_token
-        if record:
-            record.revoked = True
+        # No-op: stateless refresh tokens cannot be revoked server-side (a shared
+        # revocation store is exactly the per-replica state this fix removes).
+        # Rotation still issues a fresh token; the old one stays valid until its
+        # signed TTL — the same posture as the native-app refresh token.
+        pass
 
 
 class OpenIDCode(oidc_grants.OpenIDCode):

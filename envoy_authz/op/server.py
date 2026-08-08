@@ -7,7 +7,6 @@ acquire_token is Flask-only).
 """
 
 from authlib._joserfc_helpers import import_any_key
-from authlib.common.security import generate_token
 from authlib.consts import default_json_headers
 from authlib.oauth2.rfc6749 import AuthorizationServer as _AuthorizationServer
 from authlib.oauth2.rfc6749 import ResourceProtector
@@ -15,13 +14,25 @@ from authlib.oauth2.rfc6750 import BearerTokenGenerator, BearerTokenValidator
 from authlib.oauth2.rfc7636 import CodeChallenge
 from authlib.oidc.core import UserInfoEndpoint
 
-from ..federator.store import build_user_info, query_client, query_token, save_token
+from ..federator.store import (
+    ACCESS_TOKEN_TTL_SECONDS,
+    build_user_info,
+    create_access_token,
+    create_op_refresh_token,
+    query_client,
+    query_token,
+    save_token,
+)
 from . import runtime
 from .grants import AuthorizationCodeGrant, OpenIDCode, RefreshTokenGrant
 from .requests import StarletteJsonRequest, StarletteOAuth2Request
 
 
-class InMemoryBearerTokenValidator(BearerTokenValidator):
+class StatelessBearerTokenValidator(BearerTokenValidator):
+    """Validates a bearer at userinfo via query_token, which now reconstructs the
+    token from its signed payload instead of a per-replica dict — so a token
+    issued by one OP replica validates on any other."""
+
     def authenticate_token(self, token_string):
         return query_token(token_string)
 
@@ -112,8 +123,15 @@ def init_server(key_set, kid) -> StarletteAuthorizationServer:
     server.register_token_generator(
         "default",
         BearerTokenGenerator(
-            lambda *a, **k: generate_token(42),  # access token
-            lambda *a, **k: generate_token(48),  # refresh token
+            # Stateless, self-contained signed tokens (not random opaque strings
+            # in a per-replica dict) so any replica can validate them.
+            access_token_generator=lambda client, grant_type, user, scope: (
+                create_access_token(client, user, scope)
+            ),
+            refresh_token_generator=lambda client, grant_type, user, scope: (
+                create_op_refresh_token(client, user, scope)
+            ),
+            expires_generator=lambda client, grant_type: ACCESS_TOKEN_TTL_SECONDS,
         ),
     )
     server.register_grant(
@@ -121,7 +139,7 @@ def init_server(key_set, kid) -> StarletteAuthorizationServer:
         [CodeChallenge(required=False), OpenIDCode(require_nonce=False)],
     )
     server.register_grant(RefreshTokenGrant)
-    require_oauth.register_token_validator(InMemoryBearerTokenValidator())
+    require_oauth.register_token_validator(StatelessBearerTokenValidator())
     server.register_endpoint(
         StarletteUserInfoEndpoint(server=server, resource_protector=require_oauth)
     )

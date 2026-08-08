@@ -95,7 +95,33 @@ def test_userinfo_with_bearer_token(op_client):
     assert info["email"] == "alice@example.com"
 
 
-def test_refresh_token_rotates(op_client):
+def test_userinfo_validates_token_issued_by_another_replica(op_client):
+    """The production multi-replica failure: /oauth/token issues on replica A,
+    Vikunja's follow-up /oauth/userinfo lands on replica B. With opaque tokens
+    in a per-replica dict, B returned 401 invalid_token and Vikunja 500'd the
+    openid callback. Stateless tokens validate on any replica."""
+    code = _mint_code()
+    body = _exchange(op_client, code).json()
+
+    # Replica B: fresh in-memory state, never ran save_token for this token.
+    from envoy_authz.federator import store
+
+    store._reset()
+    store.seed()
+
+    resp = op_client.get(
+        "/oauth/userinfo",
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sub"] == "abc123"
+
+
+def test_refresh_token_rotates_and_survives_replica_change(op_client):
+    """Refresh works on a replica that never saw the token issued, and rotation
+    yields a distinct token. Because stateless tokens cannot be revoked
+    server-side, the old token stays valid until its TTL (accepted HA tradeoff,
+    same posture as the native-app refresh token)."""
     code = _mint_code()
     body = _exchange(op_client, code).json()
     refresh = body.get("refresh_token")
@@ -112,6 +138,12 @@ def test_refresh_token_rotates(op_client):
             },
         )
 
+    # Simulate the refresh landing on a different replica (fresh in-memory state).
+    from envoy_authz.federator import store
+
+    store._reset()
+    store.seed()
+
     resp = _refresh(refresh)
     assert resp.status_code == 200, resp.text
     new_body = resp.json()
@@ -119,9 +151,9 @@ def test_refresh_token_rotates(op_client):
     new_refresh = new_body.get("refresh_token")
     assert new_refresh and new_refresh != refresh
 
+    # No server-side revocation for stateless tokens: the old refresh still works.
     replay = _refresh(refresh)
-    assert replay.status_code >= 400
-    assert "error" in replay.json()
+    assert replay.status_code == 200, replay.text
 
 
 def test_pkce_positive_verifier_matches_challenge(op_client):

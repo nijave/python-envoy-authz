@@ -7,8 +7,12 @@ from envoy_authz.federator.store import (
     _reset,
     build_user_info,
     configure,
+    create_access_token,
     create_authorization_code,
+    create_op_refresh_token,
     load_authorization_code,
+    load_op_refresh_token,
+    query_token,
     seed,
 )
 
@@ -138,3 +142,66 @@ def test_signer_must_be_configured(tmp_path, monkeypatch):
             scope="openid",
             user_id="abc123",
         )
+
+
+# --- multi-replica: OP tokens must validate on a replica that never issued them.
+# The OP runs >1 replica behind a round-robin Service, so a token minted on one
+# replica is routinely validated on another. _reset() (then re-seed) simulates
+# that second replica's fresh in-memory state; a stateless token still resolves.
+
+
+def test_access_token_validates_on_another_replica(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    token = create_access_token(
+        CLIENTS["vikunja"],
+        User(id="abc123", name="Alice", email="alice@example.com"),
+        "openid profile email",
+    )
+    _reset()  # a different replica: it never ran save_token for this token
+    seed()
+    record = query_token(token)
+    assert record is not None
+    assert record.user_id == "abc123"
+    assert record.get_scope() == "openid profile email"
+    user = record.get_user()
+    assert user.email == "alice@example.com"
+    assert user.name == "Alice"
+
+
+def test_op_refresh_token_validates_on_another_replica(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    refresh = create_op_refresh_token(
+        CLIENTS["vikunja"],
+        User(id="abc123", name="Alice", email="alice@example.com"),
+        "openid profile email",
+    )
+    _reset()
+    seed()
+    data = load_op_refresh_token(refresh)
+    assert data is not None
+    assert data["user_id"] == "abc123"
+    assert data["email"] == "alice@example.com"
+
+
+def test_tokens_are_unique_per_mint(tmp_path, monkeypatch):
+    """Distinct strings even for identical claims minted in the same second, so
+    refresh rotation yields a new token and concurrent logins never collide."""
+    _seed(tmp_path, monkeypatch)
+    user = User(id="abc123", name="Alice", email="alice@example.com")
+    a = create_access_token(CLIENTS["vikunja"], user, "openid")
+    b = create_access_token(CLIENTS["vikunja"], user, "openid")
+    assert a != b
+    r1 = create_op_refresh_token(CLIENTS["vikunja"], user, "openid")
+    r2 = create_op_refresh_token(CLIENTS["vikunja"], user, "openid")
+    assert r1 != r2
+
+
+def test_query_token_rejects_garbage_and_foreign_signature(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    assert query_token("not-a-real-token") is None
+    # A refresh token is signed with a different salt, so it is not a valid
+    # access token (and vice versa) — no token type can be replayed as another.
+    refresh = create_op_refresh_token(
+        CLIENTS["vikunja"], User(id="abc123", name=None, email=None), "openid"
+    )
+    assert query_token(refresh) is None
