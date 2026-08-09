@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def build_grpc_server(config: Config) -> tuple[grpc.Server, health.HealthServicer]:
     s = config.settings
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=s.grpc_max_workers))
     health_servicer = register_services(server, config)
 
     with open(s.tls_key_path, "rb") as f:

@@ -40,6 +40,14 @@ class Settings(BaseSettings):
 
     # --- transport (moved from __main__ module constants) ---
     grpc_port: int = 5000
+    # gRPC handler thread pool. Every Check() is one HTTP request Envoy is
+    # blocked on, and Check() itself blocks (an httpx round-trip to Vikunja on
+    # a session cache miss), so a thread is held for the whole call. A browser
+    # SPA opens dozens of asset requests in parallel on page load; with too few
+    # threads the tail of that burst queues past Envoy's ext_authz response
+    # timeout and Envoy fails closed (ext_authz_error -> 403 UAEX). 4 was far
+    # too few for that fan-out.
+    grpc_max_workers: int = 64
     http_port: int = 5001
     tls_cert_path: str = "/var/lib/tls/tls.crt"
     tls_key_path: str = "/var/lib/tls/tls.key"

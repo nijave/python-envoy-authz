@@ -261,3 +261,49 @@ def test_failed_grpc_startup_does_not_leak_the_federator_pool(monkeypatch, tmp_p
 
     assert grpc_service._vikunja is None
     assert grpc_service._SESSIONS is None
+
+
+def _build_and_capture_pool(monkeypatch, tmp_path, ha_config, max_workers):
+    """Run build_grpc_server with the TLS/port binding patched out and return
+    the max_workers the gRPC handler thread pool was constructed with."""
+    from envoy_authz.config import Config
+
+    key = tmp_path / "tls.key"
+    cert = tmp_path / "tls.crt"
+    key.write_text("k")
+    cert.write_text("c")
+    update = {"tls_key_path": str(key), "tls_cert_path": str(cert)}
+    if max_workers is not None:
+        update["grpc_max_workers"] = max_workers
+    settings = ha_config.settings.model_copy(update=update)
+    config = Config(settings=settings, ha_ca_store=ha_config.ha_ca_store)
+
+    captured: dict = {}
+
+    def fake_server(executor, *args, **kwargs):
+        captured["workers"] = executor._max_workers
+        return MagicMock()
+
+    monkeypatch.setattr(main_module.grpc, "server", fake_server)
+    monkeypatch.setattr(
+        main_module, "register_services", lambda server, config: MagicMock()
+    )
+    monkeypatch.setattr(
+        main_module.grpc, "ssl_server_credentials", lambda pairs: object()
+    )
+
+    main_module.build_grpc_server(config)
+    return captured["workers"]
+
+
+def test_build_grpc_server_defaults_to_a_large_pool(monkeypatch, tmp_path, ha_config):
+    """A per-HTTP-request authz sidecar fronting a browser SPA must not run a
+    tiny handler pool: the parallel asset burst would queue past Envoy's
+    ext_authz timeout and fail closed. The default must be well above 4."""
+    assert _build_and_capture_pool(monkeypatch, tmp_path, ha_config, None) == 64
+
+
+def test_build_grpc_server_honours_configured_worker_count(
+    monkeypatch, tmp_path, ha_config
+):
+    assert _build_and_capture_pool(monkeypatch, tmp_path, ha_config, 17) == 17
