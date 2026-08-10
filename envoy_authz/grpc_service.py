@@ -24,7 +24,7 @@ from .federator.browser_bootstrap import (
 from .federator.providers import PROVIDERS, get_provider, provider_for_host
 from .federator.session import CachedSession, SessionCache, get_bearer
 from .federator.store import create_authorization_code
-from .federator.subject import Subject, derive_subject
+from .federator.subject import MissingUidError, Subject, derive_subject
 from .federator.vikunja import DownstreamError, VikunjaClient, callback_path
 
 logger = logging.getLogger(__name__)
@@ -251,6 +251,12 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                     # unprotected, so failures must not escape this block and
                     # crash the RPC (parsing must never affect the decision).
                     subject = derive_subject(client_cert, identity)
+                except MissingUidError:
+                    # Policy, not an error: a cert with no uid is not
+                    # provisionable (keying on its per-device CN would fork the
+                    # user), so reject it without a stack trace.
+                    logger.warning("denied-no-uid: client cert has no uid (USER_ID)")
+                    return _deny(retryable=False)
                 except Exception:
                     logger.exception("Failed to derive subject for federation")
                     return _deny(retryable=False)

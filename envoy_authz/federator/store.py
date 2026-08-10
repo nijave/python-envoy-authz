@@ -81,13 +81,21 @@ def _code_signer() -> URLSafeTimedSerializer:
 
 
 def build_user_info(user, scope):
-    """Construct a scoped UserInfo for `user` (sub, name, email).
+    """Construct a scoped UserInfo for `user` (sub, preferred_username, name,
+    email).
+
+    `sub` is the cert uid (subject.derive_subject); it is also emitted as
+    `preferred_username` so the RP (Vikunja) provisions a stable, human username
+    (`nick`) instead of inventing a random slug when the claim is absent. Both
+    are the same value by design — the person's uid IS their username here.
+    `preferred_username` is a `profile`-scope claim, so `.filter(scope)` drops it
+    for a bare `openid` request, which is correct.
 
     Claims with no value are OMITTED rather than emitted as null: OIDC Core
     5.3.2 says an absent claim SHOULD NOT be present with a null value, and
     `"email": null` is not something a downstream RP can provision a user from.
     """
-    claims = {"sub": str(user.id)}
+    claims = {"sub": str(user.id), "preferred_username": str(user.id)}
     if user.name:
         claims["name"] = user.name
     if user.email:

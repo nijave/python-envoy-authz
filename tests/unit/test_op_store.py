@@ -84,6 +84,20 @@ def test_build_user_info_uses_sub_name_email():
     assert info["name"] == "Alice"
 
 
+def test_build_user_info_emits_preferred_username_from_sub():
+    # sub is the cert uid; it is also the username Vikunja provisions from, so a
+    # user gets `nick`, not a random slug. profile scope keeps the claim.
+    u = User(id="nick", name="Nick V", email=None)
+    info = build_user_info(u, "openid profile email")
+    assert info["preferred_username"] == "nick"
+
+
+def test_build_user_info_drops_preferred_username_without_profile_scope():
+    u = User(id="nick", name="Nick V", email=None)
+    info = build_user_info(u, "openid")
+    assert "preferred_username" not in info
+
+
 def test_code_is_single_use(tmp_path, monkeypatch):
     """RFC 6749 4.1.2: a code MUST NOT be redeemed twice. The signature and TTL
     alone let an observed code be replayed for the whole TTL window."""

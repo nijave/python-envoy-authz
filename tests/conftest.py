@@ -13,7 +13,7 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID, ObjectIdentifier
 from envoy.service.auth.v3 import (
     external_auth_pb2,
     external_auth_pb2_grpc,
@@ -24,6 +24,9 @@ from envoy_authz.config import Config, build_store
 from envoy_authz.grpc_service import register_services
 
 FRIGATE_TEST_SECRET = "test-frigate-secret-abc123"
+
+# Netscape displayName; the same OID envoy_authz.identity reads for display_name.
+_OID_DISPLAY_NAME = ObjectIdentifier("2.16.840.1.113730.3.1.241")
 
 
 def _generate_key() -> rsa.RSAPrivateKey:
@@ -77,6 +80,9 @@ def _build_ca(common_name: str) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     return key, cert
 
 
+_UID_FROM_CN = object()  # sentinel: default uid to the CN's first label
+
+
 def _build_signed_cert(
     common_name: str,
     issuer_key: rsa.RSAPrivateKey,
@@ -84,17 +90,37 @@ def _build_signed_cert(
     *,
     eku: list[x509.ObjectIdentifier] | None = None,
     san_emails: list[str] | None = None,
+    uid: str | None = _UID_FROM_CN,
+    display_name: str | None = None,
+    given_name: str | None = None,
+    surname: str | None = None,
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     """Leaf client cert signed by the given CA. Mirrors the extension
     set used by real Home Assistant-issued client certs: BasicConstraints
     CA:FALSE, KeyUsage (digitalSignature, keyEncipherment), ExtendedKeyUsage
     (clientAuth), SubjectKeyIdentifier, AuthorityKeyIdentifier, and a DNS
-    SubjectAlternativeName matching the CN."""
+    SubjectAlternativeName matching the CN.
+
+    Subject DN mirrors the homelab PKI (homelab-pki tofu): commonName, uid,
+    displayName, givenName, surname (unset fields skipped). `uid` defaults to
+    the CN's first label so every cert carries one; pass `uid=None` to build a
+    uid-less cert (which derive_subject must reject)."""
     if eku is None:
         eku = [ExtendedKeyUsageOID.CLIENT_AUTH]
+    if uid is _UID_FROM_CN:
+        uid = common_name.split(".", 1)[0]
     key = _generate_key()
     public_key = key.public_key()
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    rdns = [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
+    if uid:
+        rdns.append(x509.NameAttribute(NameOID.USER_ID, uid))
+    if display_name:
+        rdns.append(x509.NameAttribute(_OID_DISPLAY_NAME, display_name))
+    if given_name:
+        rdns.append(x509.NameAttribute(NameOID.GIVEN_NAME, given_name))
+    if surname:
+        rdns.append(x509.NameAttribute(NameOID.SURNAME, surname))
+    subject = x509.Name(rdns)
     now = datetime.datetime.now(datetime.UTC)
     builder = (
         x509.CertificateBuilder()
@@ -240,8 +266,32 @@ _TRUSTED_CA_KEY, _TRUSTED_CA = _build_ca("test-trusted-ca")
 _UNTRUSTED_CA_KEY, _UNTRUSTED_CA = _build_ca("test-untrusted-ca")
 _SERVER_KEY, _SERVER_CERT = _build_server_cert("localhost")
 
+# Mirrors a real homelab device cert: a per-device CN, but the person's uid and
+# names. derive_subject must key on the uid ("nick"), never the CN.
 _, _TRUSTED_CLIENT_CERT = _build_signed_cert(
-    "trusted-client.ha.apps.somemissing.info", _TRUSTED_CA_KEY, _TRUSTED_CA
+    "trusted-client.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    uid="nick",
+    display_name="Nick V",
+    given_name="Nick",
+    surname="Venenga",
+)
+# Same person (uid=nick), different device CN: a second cert must derive the
+# SAME subject, proving device certs do not fork one identity into many.
+_, _TRUSTED_CLIENT_CERT_OTHER_DEVICE = _build_signed_cert(
+    "nick-ipad.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    uid="nick",
+    display_name="Nick V",
+)
+# A verified cert with no uid RDN: derive_subject must reject it.
+_, _NO_UID_CLIENT_CERT = _build_signed_cert(
+    "no-uid-client.ha.apps.somemissing.info",
+    _TRUSTED_CA_KEY,
+    _TRUSTED_CA,
+    uid=None,
 )
 _, _UNTRUSTED_CLIENT_CERT = _build_signed_cert(
     "untrusted-client.ha.apps.somemissing.info",
@@ -404,6 +454,16 @@ def check_request():
 @pytest.fixture(scope="session")
 def trusted_client_cert_pem() -> str:
     return _pem(_TRUSTED_CLIENT_CERT)
+
+
+@pytest.fixture(scope="session")
+def trusted_client_cert_other_device_pem() -> str:
+    return _pem(_TRUSTED_CLIENT_CERT_OTHER_DEVICE)
+
+
+@pytest.fixture(scope="session")
+def no_uid_client_cert_pem() -> str:
+    return _pem(_NO_UID_CLIENT_CERT)
 
 
 @pytest.fixture(scope="session")

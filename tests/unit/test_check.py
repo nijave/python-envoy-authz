@@ -144,6 +144,22 @@ def test_check_denies_bootstrap_when_cert_has_no_email(
     assert resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
 
 
+def test_check_denies_federation_when_cert_has_no_uid(
+    grpc_servicer, no_uid_client_cert_pem
+):
+    # A trusted cert with no uid RDN passes the mTLS gate but cannot be
+    # provisioned: keying on its per-device CN would fork the user, so
+    # federation must deny rather than fall through to get_bearer.
+    req = grpc_servicer.check_request(
+        host="vikunja.example.com",
+        path="/api/v1",
+        client_cert_pem=no_uid_client_cert_pem,
+    )
+    resp = grpc_servicer.servicer.Check(req, None)
+    assert resp.status.code == code_pb2.PERMISSION_DENIED
+    assert resp.denied_response.status.code == http_status_pb2.StatusCode.Unauthorized
+
+
 def test_check_frontend_oidc_path_passes_through_untouched(
     grpc_servicer, email_client_cert_pem, monkeypatch
 ):
