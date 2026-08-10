@@ -26,15 +26,22 @@ from .providers import Provider
 def is_document_navigation(headers: dict) -> bool:
     """True for a top-level browser navigation, not an API/XHR/asset request.
 
-    `Sec-Fetch-Dest` is sent by all current Chromium/Firefox releases and is
-    unambiguous (`document` only for a real address-bar/link navigation).
-    Falls back to `Accept: text/html` for clients that omit Sec-Fetch-*
-    (older browsers, curl, the API test suite), so those keep going through
-    the existing silent get_bearer ladder rather than getting a page.
+    `Sec-Fetch-Dest: document` is a positive signal (a real address-bar/link
+    navigation), but its absence is NOT a reliable negative: Vikunja's PWA
+    service worker re-issues the top-level navigation to `/` via
+    `fetch(event.request)`, which strips `Sec-Fetch-Dest` to `empty` and
+    `Sec-Fetch-Mode` to `same-origin` while preserving the original
+    `Accept: text/html`. Treating a present-but-non-`document` dest as
+    conclusive (the earlier short-circuit) misrouted that navigation to the
+    silent get_bearer ladder, so the SPA booted unauthenticated instead of
+    bootstrapping. `Accept: text/html` survives that re-fetch and is also the
+    fallback for clients that omit Sec-Fetch-* (older browsers, curl, the API
+    test suite), so it is the signal to trust once `document` is absent. Real
+    asset/XHR requests (scripts, styles, images, JSON APIs) carry an
+    asset/JSON Accept, not `text/html`, so they still fall through.
     """
-    dest = headers.get("sec-fetch-dest")
-    if dest is not None:
-        return dest == "document"
+    if headers.get("sec-fetch-dest") == "document":
+        return True
     return "text/html" in headers.get("accept", "")
 
 

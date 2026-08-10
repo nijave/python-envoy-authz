@@ -25,11 +25,36 @@ def test_is_document_navigation_true_for_sec_fetch_dest_document():
     assert is_document_navigation({"sec-fetch-dest": "document"}) is True
 
 
-def test_is_document_navigation_false_for_sec_fetch_dest_other_values():
-    # A real browser sends this for scripts/styles/images/XHR — must not be
-    # treated as a page load even though the same browser is asking.
-    for dest in ("script", "style", "image", "empty"):
-        assert is_document_navigation({"sec-fetch-dest": dest}) is False
+def test_is_document_navigation_false_for_asset_requests():
+    # Scripts/styles/images/XHR carry an asset/JSON Accept, not text/html, so a
+    # non-document Sec-Fetch-Dest with that Accept is not a page load.
+    for dest, accept in (
+        ("script", "*/*"),
+        ("style", "text/css,*/*;q=0.1"),
+        ("image", "image/avif,image/webp,*/*;q=0.5"),
+        ("empty", "application/json, text/plain, */*"),
+    ):
+        assert (
+            is_document_navigation({"sec-fetch-dest": dest, "accept": accept}) is False
+        )
+
+
+def test_is_document_navigation_true_for_service_worker_reissued_navigation():
+    # Vikunja's PWA service worker re-issues the top-level navigation to `/`
+    # via fetch(event.request): Sec-Fetch-Dest drops to `empty` and
+    # Sec-Fetch-Mode to `same-origin`, but the original Accept: text/html
+    # survives. Must still bootstrap, or the SPA boots unauthenticated.
+    assert (
+        is_document_navigation(
+            {
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "same-origin",
+                "accept": "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,*/*;q=0.8",
+            }
+        )
+        is True
+    )
 
 
 def test_is_document_navigation_falls_back_to_accept_header():

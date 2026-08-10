@@ -334,30 +334,6 @@ class AuthorizationService(external_auth_pb2_grpc.AuthorizationServicer):
                         ),
                     )
                 else:
-                    # TEMPORARY diagnostic: a real top-level navigation that a
-                    # PWA service worker re-issues via fetch() loses its
-                    # Sec-Fetch-Dest: document marker, so is_document_navigation
-                    # sends it here (silent bearer injection) instead of
-                    # bootstrapping, and the SPA boots unauthenticated. Log the
-                    # nav-relevant headers for anything that still looks like a
-                    # navigation so we can see what actually reaches Check().
-                    # Remove once the classifier is fixed.
-                    if (
-                        path_no_query == "/"
-                        or headers.get("sec-fetch-mode") == "navigate"
-                        or "text/html" in headers.get("accept", "")
-                    ):
-                        logger.info(
-                            "nav-classify-miss sub=%s path=%s "
-                            "sec-fetch-dest=%r sec-fetch-mode=%r "
-                            "sec-fetch-user=%r accept=%r",
-                            subject.sub,
-                            path_no_query,
-                            headers.get("sec-fetch-dest"),
-                            headers.get("sec-fetch-mode"),
-                            headers.get("sec-fetch-user"),
-                            headers.get("accept"),
-                        )
                     incoming_bearer = _extract_bearer(headers)
                     try:
                         upstream = get_bearer(
