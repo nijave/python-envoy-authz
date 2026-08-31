@@ -517,24 +517,24 @@ files = [
 
 [[package]]
 name = "envoyproxy-envoy-grpc-python"
-version = "1.83.0.1.20260715203741+d939ad7a9f30"
+version = "1.83.1.1.20260827231756+a1266651d658"
 description = "This package contains generated code for the protobuf module envoyproxy/envoy when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_envoy_grpc_python-1.83.0.1.20260715203741+d939ad7a9f30-py3-none-any.whl", hash = "sha256:60d8ce0ab8551d20e31e2f79c822df964eaf3f3cf3d76ef451ed3aa7bae96098"},
+    {file = "envoyproxy_envoy_grpc_python-1.83.1.1.20260827231756+a1266651d658-py3-none-any.whl", hash = "sha256:6d89536fa3f153b102ac98c1a26fc18197308f3d4aba4417e28190ff0c560008"},
 ]
 
 [package.dependencies]
-cncf-xds-grpc-python = ">=1.83.0.1.20260123205629,<1.84.0.0.0"
-envoyproxy-envoy-protocolbuffers-python = ">=35.1.0.1.20260715203741"
-envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.0.1.20240617172848,<1.84.0.0.0"
-google-cel-spec-grpc-python = ">=1.83.0.1.20251103204847,<1.84.0.0.0"
-googleapis-googleapis-grpc-python = ">=1.83.0.1.20260414192239,<1.84.0.0.0"
-grpcio = ">=1.83.0"
-opentelemetry-opentelemetry-grpc-python = ">=1.83.0.1.20260310202139,<1.84.0.0.0"
-prometheus-client-model-grpc-python = ">=1.83.0.1.20240617172851,<1.84.0.0.0"
+cncf-xds-grpc-python = ">=1.83.1.1.20260123205629,<1.84.0.0.0"
+envoyproxy-envoy-protocolbuffers-python = ">=36.0.0.1.20260827231756"
+envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.1.1.20240617172848,<1.84.0.0.0"
+google-cel-spec-grpc-python = ">=1.83.1.1.20251103204847,<1.84.0.0.0"
+googleapis-googleapis-grpc-python = ">=1.83.1.1.20260414192239,<1.84.0.0.0"
+grpcio = ">=1.83.1"
+opentelemetry-opentelemetry-grpc-python = ">=1.83.1.1.20260722205108,<1.84.0.0.0"
+prometheus-client-model-grpc-python = ">=1.83.1.1.20240617172851,<1.84.0.0.0"
 
 [package.source]
 type = "legacy"
@@ -2615,4 +2615,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "0b3e175a516fd714dd7dcd4bc4f34542cdba902c671ac275709418961c17dead"
+content-hash = "ad976180e94fe6a153c158c557e31d7a87c93d6e7c1eb124f5e24ec8cab2d4a0"
