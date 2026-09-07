@@ -227,20 +227,20 @@ files = [
 
 [[package]]
 name = "cncf-xds-grpc-python"
-version = "1.83.1.1.20260123205629+2456e1dfc066"
+version = "1.83.1.3.20260123205629+2456e1dfc066"
 description = "This package contains generated code for the protobuf module cncf/xds when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "cncf_xds_grpc_python-1.83.1.1.20260123205629+2456e1dfc066-py3-none-any.whl", hash = "sha256:ccb4a172a7d0fedb26cb0aa02dfd35c37871d0787bc2b661aae7f2a0e16c3588"},
+    {file = "cncf_xds_grpc_python-1.83.1.3.20260123205629+2456e1dfc066-py3-none-any.whl", hash = "sha256:5d8e9fc302808d239ca6392af61c67db86f19d598fe3f2072088cbd20a6ad95a"},
 ]
 
 [package.dependencies]
 cncf-xds-protocolbuffers-python = ">=36.0.0.1.20260123205629"
-envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.1.1.20240617172848,<1.84.0.0.0"
-google-cel-spec-grpc-python = ">=1.83.1.1.20251103204847,<1.84.0.0.0"
-googleapis-googleapis-grpc-python = ">=1.83.1.1.20251126203132,<1.84.0.0.0"
+envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.1.3.20240617172848,<1.84.0.0.0"
+google-cel-spec-grpc-python = ">=1.83.1.3.20251103204847,<1.84.0.0.0"
+googleapis-googleapis-grpc-python = ">=1.83.1.3.20251126203132,<1.84.0.0.0"
 grpcio = ">=1.83.1"
 
 [package.source]
@@ -517,24 +517,24 @@ files = [
 
 [[package]]
 name = "envoyproxy-envoy-grpc-python"
-version = "1.83.1.1.20260827231756+a1266651d658"
+version = "1.83.1.3.20260827231756+a1266651d658"
 description = "This package contains generated code for the protobuf module envoyproxy/envoy when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_envoy_grpc_python-1.83.1.1.20260827231756+a1266651d658-py3-none-any.whl", hash = "sha256:6d89536fa3f153b102ac98c1a26fc18197308f3d4aba4417e28190ff0c560008"},
+    {file = "envoyproxy_envoy_grpc_python-1.83.1.3.20260827231756+a1266651d658-py3-none-any.whl", hash = "sha256:7105d6afa8f162ca52a489145abb8590bc595222aabe532f1ebdc3a7852cd20b"},
 ]
 
 [package.dependencies]
-cncf-xds-grpc-python = ">=1.83.1.1.20260123205629,<1.84.0.0.0"
+cncf-xds-grpc-python = ">=1.83.1.3.20260123205629,<1.84.0.0.0"
 envoyproxy-envoy-protocolbuffers-python = ">=36.0.0.1.20260827231756"
-envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.1.1.20240617172848,<1.84.0.0.0"
-google-cel-spec-grpc-python = ">=1.83.1.1.20251103204847,<1.84.0.0.0"
-googleapis-googleapis-grpc-python = ">=1.83.1.1.20260414192239,<1.84.0.0.0"
+envoyproxy-protoc-gen-validate-grpc-python = ">=1.83.1.3.20240617172848,<1.84.0.0.0"
+google-cel-spec-grpc-python = ">=1.83.1.3.20251103204847,<1.84.0.0.0"
+googleapis-googleapis-grpc-python = ">=1.83.1.3.20260414192239,<1.84.0.0.0"
 grpcio = ">=1.83.1"
-opentelemetry-opentelemetry-grpc-python = ">=1.83.1.1.20260722205108,<1.84.0.0.0"
-prometheus-client-model-grpc-python = ">=1.83.1.1.20240617172851,<1.84.0.0.0"
+opentelemetry-opentelemetry-grpc-python = ">=1.83.1.3.20260722205108,<1.84.0.0.0"
+prometheus-client-model-grpc-python = ">=1.83.1.3.20240617172851,<1.84.0.0.0"
 
 [package.source]
 type = "legacy"
@@ -595,13 +595,13 @@ reference = "buf.build"
 
 [[package]]
 name = "envoyproxy-protoc-gen-validate-grpc-python"
-version = "1.83.1.1.20240617172848+daf171c6cdb5"
+version = "1.83.1.3.20240617172848+daf171c6cdb5"
 description = "This package contains generated code for the protobuf module envoyproxy/protoc-gen-validate when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_protoc_gen_validate_grpc_python-1.83.1.1.20240617172848+daf171c6cdb5-py3-none-any.whl", hash = "sha256:83dd52994367c9965b75a0071f3dba79c8943b4223910cc9453fc72806094ee5"},
+    {file = "envoyproxy_protoc_gen_validate_grpc_python-1.83.1.3.20240617172848+daf171c6cdb5-py3-none-any.whl", hash = "sha256:cd5d958a42c6b95233401fa95a53126b5729c0713c37ebeed086160020b21f13"},
 ]
 
 [package.dependencies]
@@ -691,13 +691,13 @@ files = [
 
 [[package]]
 name = "google-cel-spec-grpc-python"
-version = "1.83.1.1.20260511204338+9c50239169c0"
+version = "1.83.1.3.20260511204338+9c50239169c0"
 description = "This package contains generated code for the protobuf module google/cel-spec when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_cel_spec_grpc_python-1.83.1.1.20260511204338+9c50239169c0-py3-none-any.whl", hash = "sha256:687136caeb4bd32537dfa28b969af8d9ae0fbda09aaa47cc563d35d61f051daf"},
+    {file = "google_cel_spec_grpc_python-1.83.1.3.20260511204338+9c50239169c0-py3-none-any.whl", hash = "sha256:cdb4ccd301c60e5d545d066e2233952c2f482ff54e0d5765ac909cb2d96c5cbe"},
 ]
 
 [package.dependencies]
@@ -769,13 +769,13 @@ grpc = ["grpcio (>=1.59.0,<2.0.0)"]
 
 [[package]]
 name = "googleapis-googleapis-grpc-python"
-version = "1.83.1.1.20260414192239+c17df5b2beca"
+version = "1.83.1.3.20260414192239+c17df5b2beca"
 description = "This package contains generated code for the protobuf module googleapis/googleapis when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "googleapis_googleapis_grpc_python-1.83.1.1.20260414192239+c17df5b2beca-py3-none-any.whl", hash = "sha256:0a968003bed8662854e0ccc928dd00e89109a008c679a5b4d3e5d6df8efb58a9"},
+    {file = "googleapis_googleapis_grpc_python-1.83.1.3.20260414192239+c17df5b2beca-py3-none-any.whl", hash = "sha256:6a94825ca3b981cf5af3a392a766a0e2a5827cdebf858fd5ed81d8b8616654a3"},
 ]
 
 [package.dependencies]
@@ -1322,13 +1322,13 @@ instruments = ["grpcio (>=1.42.0)"]
 
 [[package]]
 name = "opentelemetry-opentelemetry-grpc-python"
-version = "1.83.1.1.20260722205108+41ecbd638b41"
+version = "1.83.1.3.20260722205108+41ecbd638b41"
 description = "This package contains generated code for the protobuf module opentelemetry/opentelemetry when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "opentelemetry_opentelemetry_grpc_python-1.83.1.1.20260722205108+41ecbd638b41-py3-none-any.whl", hash = "sha256:ffc4dea6ac853e39b2c2cacd6b527ee1fcee0451bb62d6f302974c722241d0d7"},
+    {file = "opentelemetry_opentelemetry_grpc_python-1.83.1.3.20260722205108+41ecbd638b41-py3-none-any.whl", hash = "sha256:c68a967ca0523993307fbe0e43287555b8369f0e721f8426de766bdd95006799"},
 ]
 
 [package.dependencies]
@@ -1504,13 +1504,13 @@ virtualenv = ">=20.10.0"
 
 [[package]]
 name = "prometheus-client-model-grpc-python"
-version = "1.83.1.1.20240617172851+e171c0b235c5"
+version = "1.83.1.3.20240617172851+e171c0b235c5"
 description = "This package contains generated code for the protobuf module prometheus/client-model when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "prometheus_client_model_grpc_python-1.83.1.1.20240617172851+e171c0b235c5-py3-none-any.whl", hash = "sha256:6639e4d286f7dc8be6ef118415ff9fb2582d4f0eb270fbee0ad300da9b2fc82e"},
+    {file = "prometheus_client_model_grpc_python-1.83.1.3.20240617172851+e171c0b235c5-py3-none-any.whl", hash = "sha256:62ccc28e4831f51097d5fbbb175ed46ffbd4d0de5a4923840019da551ef689b2"},
 ]
 
 [package.dependencies]
@@ -2006,30 +2006,30 @@ httpx = ">=0.25.0"
 
 [[package]]
 name = "ruff"
-version = "0.16.5"
+version = "0.16.6"
 description = "An extremely fast Python linter and code formatter, written in Rust."
 optional = false
 python-versions = ">=3.7"
 groups = ["dev"]
 files = [
-    {file = "ruff-0.16.5-py3-none-linux_armv6l.whl", hash = "sha256:12e5f673e774c35fbb62f288809c7653b73445f8ecec6b6063fd6ea3521aa14b"},
-    {file = "ruff-0.16.5-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:eda58a5802de40e7ed5b32b64e0b32539338cc6fcd2c78f61e3ad6a0d79f51c3"},
-    {file = "ruff-0.16.5-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c5ae9a7b9a8875131f40f8fe967cc86abf899779efd663cb7ce3d572d01da7eb"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7b719b0a1f4d59710d283ab2965f621684a108a9e41da622e3b23f0326cd0025"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:2298f2780ed1be0c5cb1361e32ab7b1467f3cce7dabe101d2210a314f2fe42e9"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:258f29035a2dd021e7861e631b227a5b3f14e50c1184c9a6a122c5f4576154d7"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:b9a4f0432966834019c74d1b7e5c51224305d7713f3d7faf3e7451f1a3be3cde"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:b5eb3a8c3d0ade9cea42b591fd530368e8798380e30e0a308b85a5cf718f09ea"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ef0f69e191a13a3c9816f63163c88790cb12cd157bbbb384e9c44745702ab105"},
-    {file = "ruff-0.16.5-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:0eeab41fbea2c42f98dfb9822cdccda9d24ba38d49f6dc945b5c236d48f0ef29"},
-    {file = "ruff-0.16.5-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:f0768e9df4300713fff30733c87575f68b6f1d8de41184e505b7fdd9c0c95eaf"},
-    {file = "ruff-0.16.5-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:95cc70cdc7aa80c338de356279d2adbeb2de0f520b9ecd8aba75b94e95e02f91"},
-    {file = "ruff-0.16.5-py3-none-musllinux_1_2_i686.whl", hash = "sha256:d185c8398ded1bfd91c0c2cb258346307571eccc473a8490af8c3977399c384a"},
-    {file = "ruff-0.16.5-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:fb8e3a3c4c6a784150a7ced53b015f4b253fc2bf97a610886419ead64b4756ef"},
-    {file = "ruff-0.16.5-py3-none-win32.whl", hash = "sha256:288b0a5f080492fe5635db849f9e2e84aa3cce7b7f0e955997d416c507c76a26"},
-    {file = "ruff-0.16.5-py3-none-win_amd64.whl", hash = "sha256:ddc6385fb2137f616357ca03d6c74f4be987f80fed4008566b754f6032b8546f"},
-    {file = "ruff-0.16.5-py3-none-win_arm64.whl", hash = "sha256:a64abe90968719b851bb7cedffaa8753fbdbdadab483089682db623f3edc587e"},
-    {file = "ruff-0.16.5.tar.gz", hash = "sha256:1b88500f9ffbcab3dedb0082c9f9492e91ec3d618aac1236a3e0189938f7040b"},
+    {file = "ruff-0.16.6-py3-none-linux_armv6l.whl", hash = "sha256:61c368c26bf8e973e5ab14a2772de587bc068ea3f9a277f673380749b4898fb8"},
+    {file = "ruff-0.16.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:ecf4f068e2e123e43a26e9db4e19524cc56563912404e83bbfca375757e45a32"},
+    {file = "ruff-0.16.6-py3-none-macosx_11_0_arm64.whl", hash = "sha256:99b62ea33baf130f50368798d841f0d95527b6d817bf31817b65dd058f1d314c"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7fbf89013f2bb3f6835a6038ff658dc8a1b38c98dc8e724b964168ad4e881876"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:56a67065e22efa6bc4d498299d3bb06c0c90aace8fac2068b5a12f9dc4d8d51d"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e25cc89174874b176a157e4428d66761c2c0c006654419bf384f967f361ff1b1"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:0700580ed5303723cb3c11c2f1d2a8913ce77b7ea86646dddb887f5417a9ba70"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:15f1d0b6e165a6e56567befb6629f8209271311d990bae0f37e6d065035ef5f3"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d72c591a96986ee4268860e2b7235082129ca5e4cb9cbba653a4b57c11893757"},
+    {file = "ruff-0.16.6-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:65a006baa18f33324325814c864daef03541d51564b98c517610ea756ab7003e"},
+    {file = "ruff-0.16.6-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:cd02a7bf1a21a8735228a3e8c95a9dc5cf86bd2a52194f4aaae2a5755b4de0f4"},
+    {file = "ruff-0.16.6-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:31b36f1e5ad85e0737f09d2be4e512e2e283583c14015da3b9dc07359ac0fc88"},
+    {file = "ruff-0.16.6-py3-none-musllinux_1_2_i686.whl", hash = "sha256:61029b4ab4aa723fd3064fab96b1d814492596bf0c792679fffcbde1e1679953"},
+    {file = "ruff-0.16.6-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:9ac8998457832c2061709d900856b7ad271dace0cb41f346588d540162bfa718"},
+    {file = "ruff-0.16.6-py3-none-win32.whl", hash = "sha256:0b87d9d16fcb63e8018423ca1d50b7260f15cb2da33e30db4baad4183a948c25"},
+    {file = "ruff-0.16.6-py3-none-win_amd64.whl", hash = "sha256:10d21c51c3495d8eaea7b703a16592117ea6eb1d649e36335aa965ff1173eb39"},
+    {file = "ruff-0.16.6-py3-none-win_arm64.whl", hash = "sha256:7a976c79b958f94e50a022a19f0f8c87387448020935ec14fc74331bd0a7f2c5"},
+    {file = "ruff-0.16.6.tar.gz", hash = "sha256:dcf8a73d2ff77e99dde91244b4da16feba7f14e6beeb4015dee7c5a909e99050"},
 ]
 
 [[package]]
@@ -2615,4 +2615,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "ad976180e94fe6a153c158c557e31d7a87c93d6e7c1eb124f5e24ec8cab2d4a0"
+content-hash = "21bb59f660c40009b6714527fd86db13d14781bebc200d9cca0b1d71c4f68cc9"
