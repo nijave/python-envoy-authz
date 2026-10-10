@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "grpcio (>=1.76.0,<2.0.0)",
     "grpcio-tools (>=1.76.0,<2.0.0)",
-    "envoyproxy-envoy-grpc-python (==1.84.0.1.20260827231756+a1266651d658)",
+    "envoyproxy-envoy-grpc-python (==1.84.0.1.20261002203912+c936266d958d)",
     "protobuf (>=7.36.1,<8.0.0)",
     "pyopenssl (>=26.4.0,<26.5.0)",
     "python-json-logger (>=4.0.0,<5.0.0)",
@@ -45,7 +45,7 @@ priority = "supplemental"
 
 [dependency-groups]
 dev = [
-    "ruff (>=0.16.1,<0.17.0)",
+    "ruff (>=0.17.0,<0.18.0)",
     "pytest (>=9.1.1,<9.2.0)",
     "pytest-cov (>=6.0.0,<8.0.0)",
     "pre-commit (>=4.6.0,<5.0.0)",
