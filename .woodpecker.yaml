@@ -12,7 +12,7 @@ when:
 steps:
   lint:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
@@ -23,7 +23,7 @@ steps:
 
   test:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
@@ -34,7 +34,7 @@ steps:
 
   coverage:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
