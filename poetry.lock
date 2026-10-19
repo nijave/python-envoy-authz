@@ -530,18 +530,18 @@ files = [
 
 [[package]]
 name = "envoyproxy-envoy-grpc-python"
-version = "1.84.0.1.20261002203912+c936266d958d"
+version = "1.84.0.1.20261014203957+d0597f2f56b6"
 description = "This package contains generated code for the protobuf module envoyproxy/envoy when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_envoy_grpc_python-1.84.0.1.20261002203912+c936266d958d-py3-none-any.whl", hash = "sha256:9f501a05e1bcaf00fc89ffde7f5d76593ed24a2ab1a61e749389288245958439"},
+    {file = "envoyproxy_envoy_grpc_python-1.84.0.1.20261014203957+d0597f2f56b6-py3-none-any.whl", hash = "sha256:fda63e8334958449e04456262684a94421cc168503071afd3806d5c65857e396"},
 ]
 
 [package.dependencies]
 cncf-xds-grpc-python = ">=1.84.0.1.20260123205629,<1.85.0.0.0"
-envoyproxy-envoy-protocolbuffers-python = ">=36.1.0.1.20261002203912"
+envoyproxy-envoy-protocolbuffers-python = ">=36.1.0.1.20261014203957"
 envoyproxy-protoc-gen-validate-grpc-python = ">=1.84.0.1.20240617172848,<1.85.0.0.0"
 google-cel-spec-grpc-python = ">=1.84.0.1.20251103204847,<1.85.0.0.0"
 googleapis-googleapis-grpc-python = ">=1.84.0.1.20260414192239,<1.85.0.0.0"
@@ -668,14 +668,14 @@ reference = "buf.build"
 
 [[package]]
 name = "fastapi"
-version = "0.147.0"
+version = "0.149.0"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "fastapi-0.147.0-py3-none-any.whl", hash = "sha256:d92fc67613e67c3c63c8d3e9bb8c9b237fda94acd9e9a9acb9daa1ec578e8dcf"},
-    {file = "fastapi-0.147.0.tar.gz", hash = "sha256:c144ac6633b7f498ab98c8f001c7e60c8430df3f9bc6126fe2e0e2e26f790fdd"},
+    {file = "fastapi-0.149.0-py3-none-any.whl", hash = "sha256:fc4a5cf7e14f607a48eb1ab98147e9140943e88ccd0c8791d72c0a89b1159a35"},
+    {file = "fastapi-0.149.0.tar.gz", hash = "sha256:aba5779358d0c5233759ddcddd84fe7269d71f775fd754b653b608f770558a41"},
 ]
 
 [package.dependencies]
@@ -2674,4 +2674,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "af04c6f3790d1820b3b18c36d32bb94035e49691530a42872e259ba9039814e1"
+content-hash = "bdb5e8a525f2bdf2eab44c8fa522e63bc28c6e8a2de1121201e00f0d550e4a36"

@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "grpcio (>=1.76.0,<2.0.0)",
     "grpcio-tools (>=1.76.0,<2.0.0)",
-    "envoyproxy-envoy-grpc-python (==1.84.0.1.20261002203912+c936266d958d)",
+    "envoyproxy-envoy-grpc-python (==1.84.0.1.20261014203957+d0597f2f56b6)",
     "protobuf (>=7.36.1,<8.0.0)",
     "pyopenssl (>=26.4.0,<26.5.0)",
     "python-json-logger (>=4.0.0,<5.0.0)",
