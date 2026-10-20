@@ -33,6 +33,12 @@
             "groupName": "container images",
         },
         {
+            "description": "buf.build generated SDKs are not on PyPI; the poetry manager ignores tool.poetry.source for [project] deps",
+            "matchDatasources": ["pypi"],
+            "matchPackageNames": ["envoyproxy-envoy-grpc-python"],
+            "registryUrls": ["https://buf.build/gen/python/simple/"],
+        },
+        {
             "matchManagers": ["custom.regex"],
             "matchPackageNames": ["poetry"],
             "groupName": "poetry",
