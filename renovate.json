@@ -5,6 +5,16 @@
     "schedule": ["before 6am on monday"],
     "labels": ["dependencies"],
     "lockFileMaintenance": {"enabled": true, "schedule": ["before 6am on monday"]},
+    "customManagers": [
+        {
+            "customType": "regex",
+            "description": "Poetry version pinned in CI and the image build",
+            "managerFilePatterns": ["/^\\.woodpecker\\.yaml$/", "/^Dockerfile$/"],
+            "matchStrings": ["(?:poetry==|POETRY_VERSION=)(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+            "depNameTemplate": "poetry",
+            "datasourceTemplate": "pypi",
+        },
+    ],
     "packageRules": [
         {
             "matchUpdateTypes": ["minor", "patch"],
@@ -21,6 +31,11 @@
         {
             "matchManagers": ["dockerfile", "woodpecker"],
             "groupName": "container images",
+        },
+        {
+            "matchManagers": ["custom.regex"],
+            "matchPackageNames": ["poetry"],
+            "groupName": "poetry",
         },
     ],
 }
