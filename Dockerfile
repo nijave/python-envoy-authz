@@ -1,10 +1,10 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ARG GRPC_HEALTH_PROBE_VERSION=v0.4.37
 ARG TARGETARCH
 
 ENV PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=2.2.1 \
+    POETRY_VERSION=2.5.1 \
     POETRY_VIRTUALENVS_CREATE=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

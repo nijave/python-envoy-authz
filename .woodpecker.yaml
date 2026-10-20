@@ -12,33 +12,33 @@ when:
 steps:
   lint:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
-      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.2.1)
+      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.5.1)
       - export PATH=$PWD/.poetry-venv/bin:$PATH
       - poetry install --no-root --with dev
       - poetry run ruff check .
 
   test:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
-      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.2.1)
+      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.5.1)
       - export PATH=$PWD/.poetry-venv/bin:$PATH
       - poetry install --no-root --with dev
       - poetry run pytest
 
   coverage:
     # renovate: datasource=docker depName=python
-    image: python:3.14-slim
+    image: python:3.15-slim
     environment:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
     commands:
-      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.2.1)
+      - test -x .poetry-venv/bin/poetry || (python3 -m venv .poetry-venv && .poetry-venv/bin/pip install -q --no-cache-dir poetry==2.5.1)
       - export PATH=$PWD/.poetry-venv/bin:$PATH
       - poetry install --no-root --with dev
       - poetry run pytest --cov=envoy_authz --cov-report=term-missing
