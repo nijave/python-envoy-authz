@@ -61,14 +61,14 @@ tests = ["packaging", "pytest", "pytest-asyncio"]
 
 [[package]]
 name = "authlib"
-version = "1.9.1"
+version = "1.9.2"
 description = "The ultimate Python library in building OAuth and OpenID Connect servers and clients."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "authlib-1.9.1-py2.py3-none-any.whl", hash = "sha256:8b9be8b1e5174dcbf5520e984f1a22dc2edae5b6e40a61d4cedbf86b97e9e69b"},
-    {file = "authlib-1.9.1.tar.gz", hash = "sha256:5c7d9848f47cac340f060f76ae0bc09b59f5c8e89cc1bb032d4370a0c55b5974"},
+    {file = "authlib-1.9.2-py2.py3-none-any.whl", hash = "sha256:4a39f59fa7b94160859cc447514caf199e133b7ca64a351fb4065bf5006d5a40"},
+    {file = "authlib-1.9.2.tar.gz", hash = "sha256:83271024b7d3b9992f0d928abd87c5f6e89cfb5aaada294972b860aa807ddafc"},
 ]
 
 [package.dependencies]
@@ -227,21 +227,21 @@ files = [
 
 [[package]]
 name = "cncf-xds-grpc-python"
-version = "1.85.0.1.20260123205629+2456e1dfc066"
+version = "1.85.1.1.20260123205629+2456e1dfc066"
 description = "This package contains generated code for the protobuf module cncf/xds when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "cncf_xds_grpc_python-1.85.0.1.20260123205629+2456e1dfc066-py3-none-any.whl", hash = "sha256:2e79f9e4875faf0d3b3194ba0d6b61e41f64f20d7fedc3f0ae9c729e5ca65800"},
+    {file = "cncf_xds_grpc_python-1.85.1.1.20260123205629+2456e1dfc066-py3-none-any.whl", hash = "sha256:62a1f80ecf3537940b41182aac4f810e21ce36cc7c7b6c5c71b19f2ead0f8cfb"},
 ]
 
 [package.dependencies]
 cncf-xds-protocolbuffers-python = ">=36.2.0.1.20260123205629"
-envoyproxy-protoc-gen-validate-grpc-python = ">=1.85.0.1.20240617172848,<1.86.0.0.0"
-google-cel-spec-grpc-python = ">=1.85.0.1.20251103204847,<1.86.0.0.0"
-googleapis-googleapis-grpc-python = ">=1.85.0.1.20251126203132,<1.86.0.0.0"
-grpcio = ">=1.85.0"
+envoyproxy-protoc-gen-validate-grpc-python = ">=1.85.1.1.20240617172848,<1.86.0.0.0"
+google-cel-spec-grpc-python = ">=1.85.1.1.20251103204847,<1.86.0.0.0"
+googleapis-googleapis-grpc-python = ">=1.85.1.1.20251126203132,<1.86.0.0.0"
+grpcio = ">=1.85.1"
 
 [package.source]
 type = "legacy"
@@ -525,24 +525,24 @@ files = [
 
 [[package]]
 name = "envoyproxy-envoy-grpc-python"
-version = "1.85.0.1.20261028205545+5c0f5fe1eee2"
+version = "1.85.1.1.20261028205545+5c0f5fe1eee2"
 description = "This package contains generated code for the protobuf module envoyproxy/envoy when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_envoy_grpc_python-1.85.0.1.20261028205545+5c0f5fe1eee2-py3-none-any.whl", hash = "sha256:5a87b5009bc129a8fac0b925f09bcfe5237eec05bc43d62ddfb80c64c4569f40"},
+    {file = "envoyproxy_envoy_grpc_python-1.85.1.1.20261028205545+5c0f5fe1eee2-py3-none-any.whl", hash = "sha256:edc24394e65126e6acb5978819d3cb071d8d0dfe086c9c96c43390a866dca51e"},
 ]
 
 [package.dependencies]
-cncf-xds-grpc-python = ">=1.85.0.1.20260123205629,<1.86.0.0.0"
+cncf-xds-grpc-python = ">=1.85.1.1.20260123205629,<1.86.0.0.0"
 envoyproxy-envoy-protocolbuffers-python = ">=36.2.0.1.20261028205545"
-envoyproxy-protoc-gen-validate-grpc-python = ">=1.85.0.1.20240617172848,<1.86.0.0.0"
-google-cel-spec-grpc-python = ">=1.85.0.1.20251103204847,<1.86.0.0.0"
-googleapis-googleapis-grpc-python = ">=1.85.0.1.20261015202054,<1.86.0.0.0"
-grpcio = ">=1.85.0"
-opentelemetry-opentelemetry-grpc-python = ">=1.85.0.1.20261002203906,<1.86.0.0.0"
-prometheus-client-model-grpc-python = ">=1.85.0.1.20260901201754,<1.86.0.0.0"
+envoyproxy-protoc-gen-validate-grpc-python = ">=1.85.1.1.20240617172848,<1.86.0.0.0"
+google-cel-spec-grpc-python = ">=1.85.1.1.20251103204847,<1.86.0.0.0"
+googleapis-googleapis-grpc-python = ">=1.85.1.1.20261015202054,<1.86.0.0.0"
+grpcio = ">=1.85.1"
+opentelemetry-opentelemetry-grpc-python = ">=1.85.1.1.20261002203906,<1.86.0.0.0"
+prometheus-client-model-grpc-python = ">=1.85.1.1.20260901201754,<1.86.0.0.0"
 
 [package.source]
 type = "legacy"
@@ -603,18 +603,18 @@ reference = "buf.build"
 
 [[package]]
 name = "envoyproxy-protoc-gen-validate-grpc-python"
-version = "1.85.0.1.20240617172848+daf171c6cdb5"
+version = "1.85.1.1.20240617172848+daf171c6cdb5"
 description = "This package contains generated code for the protobuf module envoyproxy/protoc-gen-validate when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "envoyproxy_protoc_gen_validate_grpc_python-1.85.0.1.20240617172848+daf171c6cdb5-py3-none-any.whl", hash = "sha256:6e384401fab27b952dec6a1eae51a8780ff42afb1f64148adb45d7b63a3aabfc"},
+    {file = "envoyproxy_protoc_gen_validate_grpc_python-1.85.1.1.20240617172848+daf171c6cdb5-py3-none-any.whl", hash = "sha256:2b6a904063e54b3adb29a77ebb89a7eb8769c181575f6fd65166120ff90e60bb"},
 ]
 
 [package.dependencies]
 envoyproxy-protoc-gen-validate-protocolbuffers-python = ">=36.2.0.1.20240617172848"
-grpcio = ">=1.85.0"
+grpcio = ">=1.85.1"
 
 [package.source]
 type = "legacy"
@@ -701,18 +701,18 @@ files = [
 
 [[package]]
 name = "google-cel-spec-grpc-python"
-version = "1.85.0.1.20260511204338+9c50239169c0"
+version = "1.85.1.1.20260511204338+9c50239169c0"
 description = "This package contains generated code for the protobuf module google/cel-spec when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_cel_spec_grpc_python-1.85.0.1.20260511204338+9c50239169c0-py3-none-any.whl", hash = "sha256:5d88e281608b569b6f7bf17e6b4899e8294cc55113c0eda778d3c470328a8fea"},
+    {file = "google_cel_spec_grpc_python-1.85.1.1.20260511204338+9c50239169c0-py3-none-any.whl", hash = "sha256:2179b961dc127c63184d95a4f337719ebe6438ae8b1b629faeb5b30a4f8335aa"},
 ]
 
 [package.dependencies]
 google-cel-spec-protocolbuffers-python = ">=36.2.0.1.20260511204338"
-grpcio = ">=1.85.0"
+grpcio = ">=1.85.1"
 
 [package.source]
 type = "legacy"
@@ -779,18 +779,18 @@ grpc = ["grpcio (>=1.59.0,<2.0.0)"]
 
 [[package]]
 name = "googleapis-googleapis-grpc-python"
-version = "1.85.0.1.20261015202054+8ac61b9e5023"
+version = "1.85.1.1.20261015202054+8ac61b9e5023"
 description = "This package contains generated code for the protobuf module googleapis/googleapis when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "googleapis_googleapis_grpc_python-1.85.0.1.20261015202054+8ac61b9e5023-py3-none-any.whl", hash = "sha256:d0b339ee4cca79f7ea09b15aa43245b2d40179b87c182753251b9230709e7d9d"},
+    {file = "googleapis_googleapis_grpc_python-1.85.1.1.20261015202054+8ac61b9e5023-py3-none-any.whl", hash = "sha256:65d9f48e3343d291c1a930db45c015f9cdc6c51935b190d010e8710f6e50716f"},
 ]
 
 [package.dependencies]
 googleapis-googleapis-protocolbuffers-python = ">=36.2.0.1.20261015202054"
-grpcio = ">=1.85.0"
+grpcio = ">=1.85.1"
 
 [package.source]
 type = "legacy"
@@ -1424,17 +1424,17 @@ instruments = ["grpcio (>=1.42.0)"]
 
 [[package]]
 name = "opentelemetry-opentelemetry-grpc-python"
-version = "1.85.0.1.20261002203906+f3a7b1f1162b"
+version = "1.85.1.1.20261002203906+f3a7b1f1162b"
 description = "This package contains generated code for the protobuf module opentelemetry/opentelemetry when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "opentelemetry_opentelemetry_grpc_python-1.85.0.1.20261002203906+f3a7b1f1162b-py3-none-any.whl", hash = "sha256:3cb23e9dde3a3cfff9ec24fda1eab1d7835510b3831776f77639bd1107327b26"},
+    {file = "opentelemetry_opentelemetry_grpc_python-1.85.1.1.20261002203906+f3a7b1f1162b-py3-none-any.whl", hash = "sha256:2d18f469800b313a95c4f8c1fe226bd83ea0a9e7dab69423c2a5f31c4c13f6b0"},
 ]
 
 [package.dependencies]
-grpcio = ">=1.85.0"
+grpcio = ">=1.85.1"
 opentelemetry-opentelemetry-protocolbuffers-python = ">=36.2.0.1.20261002203906"
 
 [package.source]
@@ -1602,17 +1602,17 @@ virtualenv = ">=20.10.0"
 
 [[package]]
 name = "prometheus-client-model-grpc-python"
-version = "1.85.0.1.20260901201754+86bbdf60caf0"
+version = "1.85.1.1.20260901201754+86bbdf60caf0"
 description = "This package contains generated code for the protobuf module prometheus/client-model when generated with the plugin grpc/python."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "prometheus_client_model_grpc_python-1.85.0.1.20260901201754+86bbdf60caf0-py3-none-any.whl", hash = "sha256:e48506b940594f1dc31473bcc44659f077815e52a5c2c3d35dba0bc61ee25103"},
+    {file = "prometheus_client_model_grpc_python-1.85.1.1.20260901201754+86bbdf60caf0-py3-none-any.whl", hash = "sha256:d373c174dbadee4a41d0b3e138e8d6a9281e3cf1d638b7a176c92bbbe3e0ff0c"},
 ]
 
 [package.dependencies]
-grpcio = ">=1.85.0"
+grpcio = ">=1.85.1"
 prometheus-client-model-protocolbuffers-python = ">=36.2.0.1.20260901201754"
 
 [package.source]
@@ -2680,4 +2680,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "a247dca9dac5e9f59276dc63ec91b6672001727f63f205be163d96c6c2ffcf24"
+content-hash = "dee702d79fd4b2d2f877d9f85aca7d97540410a196e04d08a1fa5f05cd3ec0c8"
